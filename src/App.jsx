@@ -1,0 +1,1117 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+
+
+
+const P = {
+
+  High:   { label:"High",   dot:"#E24B4A", bg:"#FCEBEB", text:"#A32D2D", border:"#F09595" },
+
+  Medium: { label:"Medium", dot:"#EF9F27", bg:"#FAEEDA", text:"#854F0B", border:"#FAC775" },
+
+  Low:    { label:"Low",    dot:"#63991a", bg:"#EAF3DE", text:"#3B6D11", border:"#97C459" },
+
+};
+
+
+
+const VIEWS = ["Today","Upcoming","Everyday Tasks","Completed"];
+
+const VIEW_ICONS = { Today:"☀", Upcoming:"📅", "Everyday Tasks":"∞", Completed:"✓" };
+
+
+
+function genId(){ return Math.random().toString(36).slice(2,9); }
+
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+
+function toDS(y,m,d){ return `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`; }
+
+function fmtDate(d){
+
+  if(!d) return "";
+
+  const dt = new Date(d+"T12:00:00");
+
+  const t = todayStr();
+
+  if(d===t) return "Today";
+
+  const tom = new Date(); tom.setDate(tom.getDate()+1);
+
+  if(d===tom.toISOString().slice(0,10)) return "Tomorrow";
+
+  return dt.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+
+}
+
+function isOverdue(d){ return !!d && d < todayStr(); }
+
+function isToday(d){ return d===todayStr(); }
+
+
+
+function useNow(){ const [n,sN]=useState(new Date()); useEffect(()=>{const i=setInterval(()=>sN(new Date()),1000);return()=>clearInterval(i);},[]);return n; }
+
+
+
+function Badge({p}){
+
+  const c=P[p];
+
+  return <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:c.bg,color:c.text,border:`0.5px solid ${c.border}`,fontWeight:500,whiteSpace:"nowrap"}}>{p}</span>;
+
+}
+
+
+
+function Dot({p}){ return <span style={{width:8,height:8,borderRadius:"50%",background:P[p].dot,display:"inline-block",flexShrink:0}}/>; }
+
+
+
+export default function App(){
+
+  const now = useNow();
+
+  const [tasks,setTasks]=useState([]);
+
+  const [view,setView]=useState("Today");
+
+  const [showAdd,setShowAdd]=useState(false);
+
+  const [quickInput,setQuickInput]=useState("");
+
+  const [parsedPreview,setParsedPreview]=useState(null);
+
+  const [showBriefing,setShowBriefing]=useState(false);
+
+  const [editId,setEditId]=useState(null);
+
+  const [form,setForm]=useState({title:"",priority:"Medium",due:"",notes:"",reminder:"",isEveryday:false});
+
+  const [calMonth,setCalMonth]=useState(now.getMonth());
+
+  const [calYear,setCalYear]=useState(now.getFullYear());
+
+  const [selDay,setSelDay]=useState(null);
+
+  const [dragIdx,setDragIdx]=useState(null);
+
+  const [overIdx,setOverIdx]=useState(null);
+
+  const [loaded,setLoaded]=useState(false);
+
+  const dragRef=useRef(null);
+
+
+
+  useEffect(()=>{
+
+    (async()=>{
+
+      try{ const r=await window.storage.get("tasks_v3"); if(r?.value) setTasks(JSON.parse(r.value)); }catch{}
+
+      try{
+
+        const lr=await window.storage.get("briefing_date");
+
+        if(!lr||lr.value!==todayStr()){ setShowBriefing(true); await window.storage.set("briefing_date",todayStr()); }
+
+      }catch{ setShowBriefing(true); }
+
+      try {
+
+        const existing = await window.storage.get("tasks_v3");
+
+        const cur = existing?.value ? JSON.parse(existing.value) : [];
+
+        const today = todayStr();
+
+        const seed = [
+
+          { id: genId(), title: "Payroll", priority: "High", due: today, reminder: "19:00", notes: "", done: false, createdAt: Date.now() },
+
+          { id: genId(), title: "Dispute", priority: "High", due: today, reminder: "19:00", notes: "", done: false, createdAt: Date.now()-1 },
+
+        ];
+
+        const merged = [...seed, ...cur];
+
+        setTasks(merged);
+
+        await window.storage.set("tasks_v3", JSON.stringify(merged));
+
+      } catch {}
+
+      setLoaded(true);
+
+    })();
+
+  },[]);
+
+
+
+  const persist=useCallback(async t=>{ try{ await window.storage.set("tasks_v3",JSON.stringify(t)); }catch{} },[]);
+
+  const setS=fn=>setTasks(p=>{ const n=typeof fn==="function"?fn(p):fn; persist(n); return n; });
+
+
+
+  const submit=()=>{
+
+    if(!form.title.trim()) return;
+
+    const t={id:genId(),...form,title:form.title.trim(),done:false,createdAt:Date.now()};
+
+    if(editId){ setS(p=>p.map(x=>x.id===editId?{...x,...t,id:editId,done:x.done}:x)); setEditId(null); }
+
+    else setS(p=>[t,...p]);
+
+    setForm({title:"",priority:"Medium",due:"",notes:"",reminder:"",isEveryday:false});
+
+    setShowAdd(false);
+
+  };
+
+
+
+  const toggle=id=>setS(p=>p.map(t=>t.id===id?{...t,done:!t.done}:t));
+
+  const remove=id=>setS(p=>p.filter(t=>t.id!==id));
+
+  const startEdit=t=>{ setForm({title:t.title,priority:t.priority,due:t.due||"",notes:t.notes||"",reminder:t.reminder||"",isEveryday:!!t.isEveryday}); setEditId(t.id); setShowAdd(true); };
+
+
+
+  const exportData=()=>{
+
+    const data=JSON.stringify(tasks,null,2);
+
+    const blob=new Blob([data],{type:"application/json"});
+
+    const url=URL.createObjectURL(blob);
+
+    const a=document.createElement("a");
+
+    a.href=url;
+
+    a.download=`tasks-backup-${todayStr()}.json`;
+
+    a.click();
+
+    URL.revokeObjectURL(url);
+
+  };
+
+
+
+  const importData=()=>{
+
+    const input=document.createElement("input");
+
+    input.type="file";
+
+    input.accept=".json";
+
+    input.onchange=async e=>{
+
+      const file=e.target.files[0];
+
+      if(!file) return;
+
+      const text=await file.text();
+
+      try{
+
+        const imported=JSON.parse(text);
+
+        if(Array.isArray(imported)){
+
+          setS(imported);
+
+          alert(`Imported ${imported.length} tasks successfully!`);
+
+        }
+
+      }catch{ alert("Invalid backup file."); }
+
+    };
+
+    input.click();
+
+  };
+
+
+
+  // NLP parser
+
+  const parseTask=input=>{
+
+    if(!input.trim()) return null;
+
+    let text=input.trim();
+
+    let priority="Medium";
+
+    let due=null;
+
+    let reminder=null;
+
+    const today=new Date();
+
+
+
+    // Priority
+
+    if(/\b(urgent|asap|high|important)\b/i.test(text)){
+
+      priority="High";
+
+      text=text.replace(/\b(urgent|asap|high|important)\b/gi,"").trim();
+
+    }else if(/\blow\b/i.test(text)){
+
+      priority="Low";
+
+      text=text.replace(/\blow\b/gi,"").trim();
+
+    }
+
+
+
+    // Time parsing
+
+    const timeMatch=text.match(/\b(\d{1,2})\s?(am|pm|:\d{2})\b/i);
+
+    if(timeMatch){
+
+      const hr=parseInt(timeMatch[1]);
+
+      const isPM=timeMatch[2].toLowerCase().includes("pm");
+
+      const mins=timeMatch[2].match(/:(\d{2})/)?.[1]||"00";
+
+      reminder=`${isPM&&hr<12?hr+12:hr===12&&!isPM?0:hr}:${mins}`.padStart(5,"0");
+
+      text=text.replace(timeMatch[0],"").trim();
+
+    }
+
+
+
+    // Date parsing
+
+    if(/\btoday\b/i.test(text)){
+
+      due=todayStr();
+
+      text=text.replace(/\btoday\b/gi,"").trim();
+
+    }else if(/\btomorrow\b/i.test(text)){
+
+      const tom=new Date(today);
+
+      tom.setDate(tom.getDate()+1);
+
+      due=tom.toISOString().slice(0,10);
+
+      text=text.replace(/\btomorrow\b/gi,"").trim();
+
+    }else{
+
+      const days=["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+
+      const dayMatch=text.match(new RegExp(`\\b(${days.join("|")})\\b`,"i"));
+
+      if(dayMatch){
+
+        const targetDay=days.indexOf(dayMatch[1].toLowerCase());
+
+        const currentDay=today.getDay();
+
+        const daysAhead=(targetDay-currentDay+7)%7||7;
+
+        const targetDate=new Date(today);
+
+        targetDate.setDate(targetDate.getDate()+daysAhead);
+
+        due=targetDate.toISOString().slice(0,10);
+
+        text=text.replace(dayMatch[0],"").trim();
+
+      }
+
+    }
+
+
+
+    text=text.replace(/\s+/g," ").trim();
+
+
+
+    return {title:text,priority,due,reminder,isEveryday:!due};
+
+  };
+
+
+
+  useEffect(()=>{
+
+    setParsedPreview(parseTask(quickInput));
+
+  },[quickInput]);
+
+
+
+  const addQuickTask=()=>{
+
+    const parsed=parseTask(quickInput);
+
+    if(!parsed||!parsed.title) return;
+
+    const t={id:genId(),...parsed,notes:"",done:false,createdAt:Date.now()};
+
+    setS(p=>[t,...p]);
+
+    setQuickInput("");
+
+    setParsedPreview(null);
+
+  };
+
+
+
+  // Drag
+
+  const onDS=(e,i)=>{ dragRef.current=i; setDragIdx(i); e.dataTransfer.effectAllowed="move"; };
+
+  const onDE=i=>{ if(i!==dragRef.current) setOverIdx(i); };
+
+  const onDrop=(e,i,list)=>{
+
+    e.preventDefault();
+
+    const from=dragRef.current;
+
+    if(from===i){ setDragIdx(null); setOverIdx(null); return; }
+
+    const arr=[...list];
+
+    const [mv]=arr.splice(from,1);
+
+    arr.splice(i,0,mv);
+
+    const ids=arr.map(t=>t.id);
+
+    const rest=tasks.filter(t=>!ids.includes(t.id));
+
+    setS([...arr,...rest]);
+
+    setDragIdx(null); setOverIdx(null);
+
+  };
+
+  const onDEnd=()=>{ setDragIdx(null); setOverIdx(null); };
+
+
+
+  // Views
+
+  const active=tasks.filter(t=>!t.done);
+
+  const everydayTasks=active.filter(t=>t.isEveryday);
+
+  const todayTasks=active.filter(t=>!t.isEveryday&&(isToday(t.due)||t.priority==="High")).sort((a,b)=>{ if(a.priority===b.priority) return (a.due||"z").localeCompare(b.due||"z"); return Object.keys(P).indexOf(a.priority)-Object.keys(P).indexOf(b.priority); });
+
+  const upcoming=active.filter(t=>!t.isEveryday&&t.due&&t.due>todayStr()).sort((a,b)=>a.due.localeCompare(b.due));
+
+  const allActive=active.filter(t=>!t.isEveryday);
+
+  const completed=tasks.filter(t=>t.done);
+
+
+
+  const listMap={ Today:todayTasks, Upcoming:upcoming, "Everyday Tasks":everydayTasks, Completed:completed };
+
+  const currentList=listMap[view]||[];
+
+
+
+  // Calendar
+
+  const firstDay=new Date(calYear,calMonth,1).getDay();
+
+  const dim=new Date(calYear,calMonth+1,0).getDate();
+
+  const mName=new Date(calYear,calMonth,1).toLocaleDateString("en-US",{month:"long",year:"numeric"});
+
+  const byDate={};
+
+  tasks.forEach(t=>{ if(t.due){ if(!byDate[t.due]) byDate[t.due]=[]; byDate[t.due].push(t); }});
+
+  const selDs=selDay?toDS(calYear,calMonth,selDay):null;
+
+  const selTasks=selDs?(byDate[selDs]||[]):[];
+
+
+
+  // Stats
+
+  const todayCnt=tasks.filter(t=>!t.done&&!t.isEveryday&&isToday(t.due)).length;
+
+  const overdueCnt=tasks.filter(t=>!t.done&&!t.isEveryday&&isOverdue(t.due)).length;
+
+  const highCnt=tasks.filter(t=>!t.done&&!t.isEveryday&&t.priority==="High").length;
+
+  const everydayCnt=tasks.filter(t=>!t.done&&t.isEveryday).length;
+
+
+
+  const hh=now.getHours(); const mm=String(now.getMinutes()).padStart(2,"0");
+
+  const ampm=hh>=12?"PM":"AM"; const h12=hh%12||12;
+
+  const greeting=hh<12?"Good morning":hh<17?"Good afternoon":"Good evening";
+
+
+
+  if(!loaded) return <div style={{padding:"2rem",color:"var(--color-text-secondary)",fontSize:14}}>Loading your tasks...</div>;
+
+
+
+  const SB_W=180;
+
+
+
+  return (
+
+    <div style={{display:"flex",minHeight:520,fontFamily:"var(--font-sans)",background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-lg)",overflow:"hidden"}}>
+
+
+
+      {/* ── SIDEBAR ── */}
+
+      <div style={{width:SB_W,flexShrink:0,background:"var(--color-background-secondary)",borderRight:"0.5px solid var(--color-border-tertiary)",display:"flex",flexDirection:"column",padding:"0 0 1rem"}}>
+
+        {/* Time + greeting */}
+
+        <div style={{padding:"1.25rem 1rem 1rem",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+
+          <div style={{fontSize:24,fontWeight:500,color:"var(--color-text-primary)",fontVariantNumeric:"tabular-nums",lineHeight:1}}>{h12}:{mm} <span style={{fontSize:13,fontWeight:400,color:"var(--color-text-secondary)"}}>{ampm}</span></div>
+
+          <div style={{fontSize:11,color:"var(--color-text-secondary)",marginTop:4}}>{now.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</div>
+
+        </div>
+
+
+
+        {/* Nav */}
+
+        <div style={{padding:"0.75rem 0.5rem",flex:1}}>
+
+          {VIEWS.map(v=>{
+
+            const cnt = v==="Today"?todayTasks.length:v==="Upcoming"?upcoming.length:v==="Everyday Tasks"?everydayTasks.length:completed.length;
+
+            return (
+
+              <div key={v} onClick={()=>setView(v)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 10px",borderRadius:"var(--border-radius-md)",marginBottom:2,cursor:"pointer",background:view===v?"var(--color-background-primary)":"transparent",border:view===v?"0.5px solid var(--color-border-secondary)":"0.5px solid transparent"}}>
+
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+
+                  <span style={{fontSize:13}}>{VIEW_ICONS[v]}</span>
+
+                  <span style={{fontSize:13,color:view===v?"var(--color-text-primary)":"var(--color-text-secondary)",fontWeight:view===v?500:400}}>{v}</span>
+
+                </div>
+
+                {cnt>0&&<span style={{fontSize:10,background:v==="Today"&&overdueCnt>0?"#FCEBEB":v==="Today"?"#E6F1FB":"var(--color-background-primary)",color:v==="Today"&&overdueCnt>0?"#A32D2D":"var(--color-text-secondary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:10,padding:"1px 6px",minWidth:16,textAlign:"center"}}>{cnt}</span>}
+
+              </div>
+
+            );
+
+          })}
+
+        </div>
+
+
+
+        {/* Quick stats */}
+
+        <div style={{padding:"0 0.75rem",borderTop:"0.5px solid var(--color-border-tertiary)",paddingTop:"0.75rem"}}>
+
+          {[
+
+            {label:"Overdue", val:overdueCnt, color:"#A32D2D", show:overdueCnt>0},
+
+            {label:"Due today", val:todayCnt, color:"#854F0B", show:true},
+
+            {label:"High priority", val:highCnt, color:"#533000", show:true},
+
+            {label:"Everyday tasks", val:everydayCnt, color:"#378ADD", show:true},
+
+          ].map(s=>(
+
+            <div key={s.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 6px",marginBottom:2}}>
+
+              <span style={{fontSize:11,color:"var(--color-text-secondary)"}}>{s.label}</span>
+
+              <span style={{fontSize:11,fontWeight:500,color:s.show&&s.val>0?s.color:"var(--color-text-secondary)"}}>{s.val}</span>
+
+            </div>
+
+          ))}
+
+        </div>
+
+
+
+        <div style={{padding:"0.75rem 0.75rem 0"}}>
+
+          <button onClick={()=>setShowBriefing(true)} style={{width:"100%",fontSize:12,padding:"6px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-secondary)",color:"var(--color-text-secondary)",marginBottom:6}}>Daily briefing</button>
+
+          <button onClick={exportData} style={{width:"100%",fontSize:12,padding:"6px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-secondary)",color:"var(--color-text-secondary)",marginBottom:6}}>💾 Export backup</button>
+
+          <button onClick={importData} style={{width:"100%",fontSize:12,padding:"6px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-secondary)",color:"var(--color-text-secondary)"}}>📂 Import backup</button>
+
+        </div>
+
+      </div>
+
+
+
+      {/* ── MAIN ── */}
+
+      <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0}}>
+
+
+
+        {/* Smart Input - Always Visible */}
+
+        <div style={{padding:"1rem 1.25rem",borderBottom:"0.5px solid var(--color-border-tertiary)",background:"var(--color-background-secondary)"}}>
+
+          <div style={{position:"relative"}}>
+
+            <input
+
+              placeholder='Type anything — "Call dentist tomorrow 3pm" or "Drink water"'
+
+              value={quickInput}
+
+              onChange={e=>setQuickInput(e.target.value)}
+
+              onKeyDown={e=>e.key==="Enter"&&addQuickTask()}
+
+              style={{width:"100%",boxSizing:"border-box",fontSize:14,padding:"10px 80px 10px 12px",borderRadius:"var(--border-radius-md)",border:"0.5px solid var(--color-border-secondary)",background:"var(--color-background-primary)",color:"var(--color-text-primary)"}}
+
+            />
+
+            <button onClick={addQuickTask} disabled={!quickInput.trim()} style={{position:"absolute",right:6,top:"50%",transform:"translateY(-50%)",fontSize:12,padding:"5px 12px",cursor:quickInput.trim()?"pointer":"not-allowed",borderRadius:"var(--border-radius-md)",background:quickInput.trim()?"#378ADD":"var(--color-background-tertiary)",border:"none",color:"#fff",opacity:quickInput.trim()?1:0.5}}>Add</button>
+
+          </div>
+
+          {parsedPreview&&parsedPreview.title&&(
+
+            <div style={{marginTop:6,fontSize:11,color:"var(--color-text-secondary)",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+
+              <span>Detected:</span>
+
+              {parsedPreview.isEveryday&&<span style={{background:"#E6F1FB",color:"#378ADD",padding:"2px 7px",borderRadius:10,border:"0.5px solid #90C7F5"}}>♾️ Everyday task</span>}
+
+              {parsedPreview.due&&<span style={{background:"#FAEEDA",color:"#854F0B",padding:"2px 7px",borderRadius:10,border:"0.5px solid #FAC775"}}>📅 {fmtDate(parsedPreview.due)}</span>}
+
+              {parsedPreview.reminder&&<span style={{background:"#EAF3DE",color:"#3B6D11",padding:"2px 7px",borderRadius:10,border:"0.5px solid #97C459"}}>⏰ {parsedPreview.reminder}</span>}
+
+              {parsedPreview.priority!=="Medium"&&<span style={{background:P[parsedPreview.priority].bg,color:P[parsedPreview.priority].text,padding:"2px 7px",borderRadius:10,border:`0.5px solid ${P[parsedPreview.priority].border}`}}>{parsedPreview.priority}</span>}
+
+            </div>
+
+          )}
+
+        </div>
+
+
+
+        {/* Top bar */}
+
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"1rem 1.25rem 0.75rem",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+
+          <div>
+
+            <div style={{fontSize:16,fontWeight:500,color:"var(--color-text-primary)"}}>{view}</div>
+
+            <div style={{fontSize:11,color:"var(--color-text-secondary)"}}>{currentList.length} task{currentList.length!==1?"s":""}</div>
+
+          </div>
+
+          <button onClick={()=>{ setEditId(null); setForm({title:"",priority:"Medium",due:"",notes:"",reminder:"",isEveryday:view==="Everyday Tasks"}); setShowAdd(v=>!v); }} style={{fontSize:13,padding:"6px 14px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"#378ADD",border:"none",color:"#fff",fontWeight:500}}>+ Advanced</button>
+
+        </div>
+
+
+
+        {/* Add / Edit form */}
+
+        {showAdd&&(
+
+          <div style={{margin:"0.75rem 1.25rem",background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-secondary)",borderRadius:"var(--border-radius-lg)",padding:"1rem"}}>
+
+            <input placeholder={form.isEveryday?'Type anything — "Drink water" (no date = everyday task)':"What needs to be done?"} value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&submit()} autoFocus
+
+              style={{width:"100%",boxSizing:"border-box",fontSize:14,padding:"8px 10px",borderRadius:"var(--border-radius-md)",border:"0.5px solid var(--color-border-secondary)",background:"var(--color-background-primary)",color:"var(--color-text-primary)",marginBottom:10}}/>
+
+
+
+            <div style={{marginBottom:10}}>
+
+              <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:12,color:"var(--color-text-secondary)"}}>
+
+                <input type="checkbox" checked={form.isEveryday} onChange={e=>setForm(f=>({...f,isEveryday:e.target.checked,due:e.target.checked?"":f.due}))} style={{cursor:"pointer"}}/>
+
+                Everyday task (no due date, reminds until checked)
+
+              </label>
+
+            </div>
+
+
+
+            {!form.isEveryday&&(
+
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:10}}>
+
+                {[["Priority","priority","sel"],["Due date","due","date"],["Reminder","reminder","time"]].map(([lbl,k,tp])=>(
+
+                  <div key={k}>
+
+                    <div style={{fontSize:10,color:"var(--color-text-secondary)",marginBottom:3,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.04em"}}>{lbl}</div>
+
+                    {tp==="sel"
+
+                      ?<select value={form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} style={{width:"100%",fontSize:13,padding:"5px 7px",borderRadius:"var(--border-radius-md)",border:"0.5px solid var(--color-border-secondary)",background:"var(--color-background-primary)",color:"var(--color-text-primary)"}}><option>High</option><option>Medium</option><option>Low</option></select>
+
+                      :<input type={tp} value={form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} style={{width:"100%",boxSizing:"border-box",fontSize:13,padding:"5px 7px",borderRadius:"var(--border-radius-md)",border:"0.5px solid var(--color-border-secondary)",background:"var(--color-background-primary)",color:"var(--color-text-primary)"}}/>
+
+                    }
+
+                  </div>
+
+                ))}
+
+              </div>
+
+            )}
+
+            <textarea placeholder="Notes (optional)" value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} rows={2}
+
+              style={{width:"100%",boxSizing:"border-box",fontSize:13,padding:"7px 9px",borderRadius:"var(--border-radius-md)",border:"0.5px solid var(--color-border-secondary)",background:"var(--color-background-primary)",color:"var(--color-text-primary)",resize:"vertical",marginBottom:10}}/>
+
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+
+              <button onClick={()=>{setShowAdd(false);setEditId(null);}} style={{fontSize:13,padding:"5px 14px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-secondary)",color:"var(--color-text-secondary)"}}>Cancel</button>
+
+              <button onClick={submit} style={{fontSize:13,padding:"5px 14px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"#378ADD",border:"none",color:"#fff",fontWeight:500}}>{editId?"Save changes":"Add task"}</button>
+
+            </div>
+
+          </div>
+
+        )}
+
+
+
+        {/* Task list */}
+
+        <div style={{flex:1,overflowY:"auto",padding:"0.5rem 1.25rem 1rem"}}>
+
+          {view==="Today"&&everydayTasks.length>0&&(
+
+            <>
+
+              <div style={{fontSize:11,fontWeight:500,color:"var(--color-text-secondary)",padding:"8px 4px 6px",textTransform:"uppercase",letterSpacing:"0.05em",display:"flex",alignItems:"center",gap:6}}>
+
+                <span>♾️ Everyday Tasks</span>
+
+                <span style={{fontSize:10,background:"#E6F1FB",color:"#378ADD",padding:"1px 6px",borderRadius:10}}>{everydayTasks.length}</span>
+
+              </div>
+
+              {everydayTasks.map((task,i)=>{
+
+                const isOver=overIdx===i;
+
+                return (
+
+                  <div key={task.id} draggable
+
+                    onDragStart={e=>onDS(e,i)} onDragEnter={()=>onDE(i)}
+
+                    onDragOver={e=>e.preventDefault()} onDrop={e=>onDrop(e,i,everydayTasks)} onDragEnd={onDEnd}
+
+                    style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",marginBottom:5,background:"var(--color-background-primary)",borderRadius:"var(--border-radius-md)",border:isOver?"0.5px solid #378ADD":"0.5px solid var(--color-border-tertiary)",opacity:dragIdx===i?0.35:1,cursor:"grab",transition:"border-color 0.12s",borderLeft:"3px solid #378ADD"}}>
+
+                    <div onClick={()=>toggle(task.id)} style={{width:18,height:18,borderRadius:"50%",border:"1.5px solid #378ADD",background:task.done?"#378ADD":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,marginTop:2}}>
+
+                      {task.done&&<svg width="9" height="9" viewBox="0 0 9 9"><polyline points="1.5,4.5 3.5,7 7.5,1.5" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+
+                    </div>
+
+                    <div style={{flex:1,minWidth:0}}>
+
+                      <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+
+                        <span style={{fontSize:14,color:task.done?"var(--color-text-secondary)":"var(--color-text-primary)",textDecoration:task.done?"line-through":"none",wordBreak:"break-word"}}>{task.title}</span>
+
+                        <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#E6F1FB",color:"#378ADD",border:"0.5px solid #90C7F5",fontWeight:500}}>everyday</span>
+
+                      </div>
+
+                      {task.notes&&<div style={{fontSize:12,color:"var(--color-text-secondary)",marginTop:2,wordBreak:"break-word"}}>{task.notes}</div>}
+
+                    </div>
+
+                    <div style={{display:"flex",gap:4,flexShrink:0,opacity:0.6}}>
+
+                      <button onClick={()=>startEdit(task)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-secondary)"}}>Edit</button>
+
+                      <button onClick={()=>remove(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-danger)"}}>✕</button>
+
+                    </div>
+
+                  </div>
+
+                );
+
+              })}
+
+              <div style={{fontSize:11,fontWeight:500,color:"var(--color-text-secondary)",padding:"16px 4px 6px",textTransform:"uppercase",letterSpacing:"0.05em"}}>Due Today</div>
+
+            </>
+
+          )}
+
+
+
+          {currentList.length===0&&(
+
+            <div style={{textAlign:"center",padding:"3rem 1rem",color:"var(--color-text-secondary)",fontSize:14}}>
+
+              {view==="Today"?"No tasks for today — enjoy the day!":view==="Upcoming"?"No upcoming tasks with due dates.":view==="Everyday Tasks"?"No everyday tasks yet.\n\nTip: Add tasks without due dates that you want to be reminded about throughout the day.":view==="Completed"?"No completed tasks yet.":"No tasks yet — add one above!"}
+
+            </div>
+
+          )}
+
+          {currentList.map((task,i)=>{
+
+            const od=isOverdue(task.due)&&!task.done;
+
+            const td=isToday(task.due)&&!task.done;
+
+            const isOver=overIdx===i;
+
+            return (
+
+              <div key={task.id} draggable
+
+                onDragStart={e=>onDS(e,i)} onDragEnter={()=>onDE(i)}
+
+                onDragOver={e=>e.preventDefault()} onDrop={e=>onDrop(e,i,currentList)} onDragEnd={onDEnd}
+
+                style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",marginBottom:5,background:"var(--color-background-primary)",borderRadius:"var(--border-radius-md)",border:isOver?"0.5px solid #378ADD":"0.5px solid var(--color-border-tertiary)",opacity:dragIdx===i?0.35:1,cursor:"grab",transition:"border-color 0.12s",borderLeft:task.isEveryday?`3px solid #378ADD`:`3px solid ${od?"#E24B4A":td?"#EF9F27":P[task.priority].dot}`}}>
+
+                {/* Checkbox */}
+
+                <div onClick={()=>toggle(task.id)} style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${task.done?"#378ADD":P[task.priority].dot}`,background:task.done?"#378ADD":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,marginTop:2}}>
+
+                  {task.done&&<svg width="9" height="9" viewBox="0 0 9 9"><polyline points="1.5,4.5 3.5,7 7.5,1.5" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+
+                </div>
+
+                {/* Content */}
+
+                <div style={{flex:1,minWidth:0}}>
+
+                  <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+
+                    <span style={{fontSize:14,color:task.done?"var(--color-text-secondary)":"var(--color-text-primary)",textDecoration:task.done?"line-through":"none",fontWeight:task.priority==="High"&&!task.done?500:400,wordBreak:"break-word"}}>{task.title}</span>
+
+                    {!task.isEveryday&&<Badge p={task.priority}/>}
+
+                    {task.isEveryday&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#E6F1FB",color:"#378ADD",border:"0.5px solid #90C7F5",fontWeight:500}}>everyday</span>}
+
+                  </div>
+
+                  {task.notes&&<div style={{fontSize:12,color:"var(--color-text-secondary)",marginTop:2,wordBreak:"break-word"}}>{task.notes}</div>}
+
+                  <div style={{display:"flex",gap:10,marginTop:4,alignItems:"center",flexWrap:"wrap"}}>
+
+                    {task.due&&<span style={{fontSize:11,color:od?"#A32D2D":td?"#854F0B":"var(--color-text-secondary)",fontWeight:od||td?500:400}}>{od?"⚠ Overdue":""}{od?" · ":""}{fmtDate(task.due)}</span>}
+
+                    {task.reminder&&<span style={{fontSize:11,color:"var(--color-text-secondary)"}}>⏰ {task.reminder}</span>}
+
+                  </div>
+
+                </div>
+
+                {/* Actions */}
+
+                <div style={{display:"flex",gap:4,flexShrink:0,opacity:0.6}}>
+
+                  <button onClick={()=>startEdit(task)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-secondary)"}}>Edit</button>
+
+                  <button onClick={()=>remove(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-danger)"}}>✕</button>
+
+                </div>
+
+              </div>
+
+            );
+
+          })}
+
+        </div>
+
+      </div>
+
+
+
+      {/* ── CALENDAR PANEL ── */}
+
+      <div style={{width:200,flexShrink:0,borderLeft:"0.5px solid var(--color-border-tertiary)",display:"flex",flexDirection:"column",background:"var(--color-background-secondary)"}}>
+
+        <div style={{padding:"1rem 0.75rem 0.5rem",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+
+            <button onClick={()=>{ let m=calMonth-1,y=calYear; if(m<0){m=11;y--;} setCalMonth(m);setCalYear(y);setSelDay(null); }} style={{fontSize:14,cursor:"pointer",background:"transparent",border:"none",color:"var(--color-text-secondary)",padding:"0 4px",lineHeight:1}}>‹</button>
+
+            <div style={{fontSize:11,fontWeight:500,color:"var(--color-text-primary)",textAlign:"center"}}>{mName}</div>
+
+            <button onClick={()=>{ let m=calMonth+1,y=calYear; if(m>11){m=0;y++;} setCalMonth(m);setCalYear(y);setSelDay(null); }} style={{fontSize:14,cursor:"pointer",background:"transparent",border:"none",color:"var(--color-text-secondary)",padding:"0 4px",lineHeight:1}}>›</button>
+
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:1,textAlign:"center"}}>
+
+            {["S","M","T","W","T","F","S"].map((d,i)=><div key={i} style={{fontSize:9,color:"var(--color-text-secondary)",padding:"2px 0",fontWeight:500}}>{d}</div>)}
+
+            {Array.from({length:firstDay}).map((_,i)=><div key={"e"+i}/>)}
+
+            {Array.from({length:dim}).map((_,i)=>{
+
+              const day=i+1;
+
+              const ds=toDS(calYear,calMonth,day);
+
+              const isTd=ds===todayStr();
+
+              const tasks_=byDate[ds]||[];
+
+              const hasHigh=tasks_.some(t=>!t.done&&t.priority==="High");
+
+              const hasDue=tasks_.some(t=>!t.done);
+
+              const isSel=selDay===day;
+
+              return (
+
+                <div key={day} onClick={()=>setSelDay(isSel?null:day)} style={{position:"relative",padding:"3px 1px",borderRadius:4,cursor:"pointer",background:isTd?"#378ADD":isSel?"var(--color-background-primary)":"transparent",color:isTd?"#fff":ds<todayStr()?"var(--color-text-secondary)":"var(--color-text-primary)",fontSize:10,textAlign:"center",border:isSel&&!isTd?"0.5px solid #378ADD":"0.5px solid transparent"}}>
+
+                  {day}
+
+                  {hasDue&&<span style={{position:"absolute",bottom:1,left:"50%",transform:"translateX(-50%)",width:3,height:3,borderRadius:"50%",background:hasHigh?"#E24B4A":"#378ADD",display:"block"}}/>}
+
+                </div>
+
+              );
+
+            })}
+
+          </div>
+
+        </div>
+
+
+
+        {/* Selected day */}
+
+        <div style={{flex:1,padding:"0.75rem",overflowY:"auto"}}>
+
+          {selDay ? (
+
+            <>
+
+              <div style={{fontSize:11,fontWeight:500,color:"var(--color-text-secondary)",marginBottom:8}}>
+
+                {new Date(selDs+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}
+
+              </div>
+
+              {selTasks.length===0
+
+                ? <div style={{fontSize:11,color:"var(--color-text-secondary)"}}>Nothing scheduled.</div>
+
+                : selTasks.map(t=>(
+
+                    <div key={t.id} style={{display:"flex",alignItems:"flex-start",gap:6,marginBottom:8}}>
+
+                      <Dot p={t.priority}/>
+
+                      <div>
+
+                        <div style={{fontSize:12,color:t.done?"var(--color-text-secondary)":"var(--color-text-primary)",textDecoration:t.done?"line-through":"none",lineHeight:1.3}}>{t.title}</div>
+
+                        {t.reminder&&<div style={{fontSize:10,color:"var(--color-text-secondary)",marginTop:2}}>{t.reminder}</div>}
+
+                      </div>
+
+                    </div>
+
+                  ))
+
+              }
+
+            </>
+
+          ) : (
+
+            <div style={{fontSize:11,color:"var(--color-text-secondary)",textAlign:"center",marginTop:"1rem"}}>Click a day to see tasks</div>
+
+          )}
+
+        </div>
+
+
+
+        {/* Today's due strip */}
+
+        {todayCnt>0&&(
+
+          <div style={{borderTop:"0.5px solid var(--color-border-tertiary)",padding:"0.75rem"}}>
+
+            <div style={{fontSize:10,fontWeight:500,color:"#854F0B",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>Due today · {todayCnt}</div>
+
+            {tasks.filter(t=>!t.done&&isToday(t.due)).map(t=>(
+
+              <div key={t.id} style={{display:"flex",alignItems:"center",gap:5,marginBottom:5}}>
+
+                <Dot p={t.priority}/>
+
+                <span style={{fontSize:11,color:"var(--color-text-primary)",flex:1,wordBreak:"break-word"}}>{t.title}</span>
+
+              </div>
+
+            ))}
+
+          </div>
+
+        )}
+
+      </div>
+
+
+
+      {/* ── DAILY BRIEFING MODAL ── */}
+
+      {showBriefing&&(
+
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center"}}>
+
+          <div style={{background:"var(--color-background-primary)",borderRadius:"var(--border-radius-lg)",border:"0.5px solid var(--color-border-tertiary)",padding:"1.5rem",width:"min(360px,90vw)",boxSizing:"border-box"}}>
+
+            <div style={{fontSize:11,fontWeight:500,color:"#378ADD",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>Daily briefing</div>
+
+            <div style={{fontSize:20,fontWeight:500,color:"var(--color-text-primary)",marginBottom:2}}>{greeting}</div>
+
+            <div style={{fontSize:12,color:"var(--color-text-secondary)",marginBottom:"1rem"}}>{now.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})} · {h12}:{mm} {ampm}</div>
+
+
+
+            {overdueCnt>0&&(
+
+              <div style={{background:"#FCEBEB",border:"0.5px solid #F09595",borderRadius:"var(--border-radius-md)",padding:"8px 12px",marginBottom:10}}>
+
+                <div style={{fontSize:11,fontWeight:500,color:"#A32D2D",marginBottom:4}}>⚠ {overdueCnt} overdue task{overdueCnt!==1?"s":""}</div>
+
+                {tasks.filter(t=>!t.done&&isOverdue(t.due)).slice(0,3).map(t=>(
+
+                  <div key={t.id} style={{fontSize:12,color:"#A32D2D",marginBottom:2}}>· {t.title}</div>
+
+                ))}
+
+              </div>
+
+            )}
+
+
+
+            {todayCnt>0&&(
+
+              <div style={{marginBottom:10}}>
+
+                <div style={{fontSize:11,fontWeight:500,color:"var(--color-text-secondary)",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.04em"}}>Due today</div>
+
+                {tasks.filter(t=>!t.done&&isToday(t.due)).map(t=>(
+
+                  <div key={t.id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+
+                    <Dot p={t.priority}/><Badge p={t.priority}/>
+
+                    <span style={{fontSize:13,color:"var(--color-text-primary)",flex:1}}>{t.title}</span>
+
+                  </div>
+
+                ))}
+
+              </div>
+
+            )}
+
+
+
+            {highCnt>0&&(
+
+              <div style={{marginBottom:12}}>
+
+                <div style={{fontSize:11,fontWeight:500,color:"var(--color-text-secondary)",marginBottom:6,textTransform:"uppercase",letterSpacing:"0.04em"}}>High priority</div>
+
+                {tasks.filter(t=>!t.done&&t.priority==="High"&&!isToday(t.due)).slice(0,4).map(t=>(
+
+                  <div key={t.id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+
+                    <Dot p={t.priority}/><span style={{fontSize:13,color:"var(--color-text-primary)",flex:1}}>{t.title}</span>
+
+                    {t.due&&<span style={{fontSize:11,color:"var(--color-text-secondary)"}}>{fmtDate(t.due)}</span>}
+
+                  </div>
+
+                ))}
+
+              </div>
+
+            )}
+
+
+
+            {!overdueCnt&&!todayCnt&&!highCnt&&(
+
+              <div style={{fontSize:14,color:"var(--color-text-secondary)",marginBottom:12,textAlign:"center",padding:"1rem"}}>You're all clear — no urgent tasks today!</div>
+
+            )}
+
+
+
+            <button onClick={()=>setShowBriefing(false)} style={{width:"100%",padding:"9px",fontSize:14,cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"#378ADD",border:"none",color:"#fff",fontWeight:500}}>Let's get to work</button>
+
+          </div>
+
+        </div>
+
+      )}
+
+    </div>
+
+  );
+
+}
