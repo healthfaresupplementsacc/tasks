@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "powershell",
+            "command": "Set-Location 'C:\\Users\\bruno\\OneDrive\\Documents\\Claude Projects\\tasks-page'; git add -A; git diff --cached --quiet; if ($LASTEXITCODE -ne 0) { git commit -m 'auto: sync changes'; git push }",
+            "timeout": 30,
+            "statusMessage": "Pushing changes to GitHub..."
+          }
+        ]
+      }
+    ]
+  }
+}
