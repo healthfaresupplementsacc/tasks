@@ -155,7 +155,7 @@
         setShowAdd(false);
       };
 
-      const toggle=id=>setS(p=>p.map(t=>t.id===id?{...t,done:!t.done}:t));
+      const toggle=id=>setS(p=>p.map(t=>t.id===id?{...t,done:!t.done,completedAt:!t.done?new Date().toISOString():undefined}:t));
       const remove=id=>setS(p=>p.filter(t=>t.id!==id));
       const startEdit=t=>{ setForm({title:t.title,priority:t.priority,due:t.due||"",notes:t.notes||"",reminder:t.reminder||"",isEveryday:!!t.isEveryday}); setEditId(t.id); setShowAdd(true); };
 
@@ -264,7 +264,7 @@
       const everydayTasks=active.filter(t=>t.isEveryday);
       const todayTasks=active.filter(t=>!t.isEveryday&&(isToday(t.due)||t.priority==="High")).sort((a,b)=>{ if(a.priority===b.priority) return (a.due||"z").localeCompare(b.due||"z"); return Object.keys(P).indexOf(a.priority)-Object.keys(P).indexOf(b.priority); });
       const upcoming=active.filter(t=>!t.isEveryday&&t.due&&t.due>todayStr()).sort((a,b)=>a.due.localeCompare(b.due));
-      const completed=tasks.filter(t=>t.done);
+      const completed=tasks.filter(t=>t.done).sort((a,b)=>new Date(b.completedAt||0)-new Date(a.completedAt||0));
 
       const listMap={ Today:todayTasks, Upcoming:upcoming, "Everyday Tasks":everydayTasks, Completed:completed };
       const currentList=listMap[view]||[];
@@ -425,6 +425,7 @@
                           {task.notes&&<div style={{fontSize:12,color:"var(--color-text-secondary)",marginTop:2,wordBreak:"break-word"}}>{task.notes}</div>}
                         </div>
                         <div style={{display:"flex",gap:4,flexShrink:0,opacity:0.6}}>
+                          <button onClick={()=>toggle(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"#EAF3DE",border:"0.5px solid #97C459",color:"#3B6D11"}}>✓ Done</button>
                           <button onClick={()=>startEdit(task)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-secondary)"}}>Edit</button>
                           <button onClick={()=>remove(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-danger)"}}>✕</button>
                         </div>
@@ -435,43 +436,93 @@
                 </>
               )}
 
-              {currentList.length===0&&(
-                <div style={{textAlign:"center",padding:"3rem 1rem",color:"var(--color-text-secondary)",fontSize:14}}>
-                  {view==="Today"?"No tasks for today — enjoy the day!":view==="Upcoming"?"No upcoming tasks with due dates.":view==="Everyday Tasks"?"No everyday tasks yet.":view==="Completed"?"No completed tasks yet.":"No tasks yet — add one above!"}
-                </div>
+              {view==="Completed" ? (
+                currentList.length===0 ? (
+                  <div style={{textAlign:"center",padding:"3rem 1rem",color:"var(--color-text-secondary)",fontSize:14}}>No completed tasks yet.</div>
+                ) : (
+                  (() => {
+                    const groups={};
+                    currentList.forEach(t=>{
+                      const dk=t.completedAt?t.completedAt.slice(0,10):"older";
+                      if(!groups[dk]) groups[dk]=[];
+                      groups[dk].push(t);
+                    });
+                    const yesterdayStr=new Date(Date.now()-86400000).toISOString().slice(0,10);
+                    return Object.entries(groups).sort(([a],[b])=>b.localeCompare(a)).map(([dk,gtasks])=>{
+                      const label=dk===todayStr()?"Today":dk===yesterdayStr?"Yesterday":dk==="older"?"Earlier":new Date(dk+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
+                      return (
+                        <div key={dk}>
+                          <div style={{fontSize:11,fontWeight:500,color:"var(--color-text-secondary)",padding:"10px 4px 6px",textTransform:"uppercase",letterSpacing:"0.05em",display:"flex",alignItems:"center",gap:6}}>
+                            <span>✓ {label}</span>
+                            <span style={{fontSize:10,background:"var(--color-background-tertiary)",color:"var(--color-text-secondary)",padding:"1px 6px",borderRadius:10}}>{gtasks.length}</span>
+                          </div>
+                          {gtasks.map(task=>(
+                            <div key={task.id} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",marginBottom:5,background:"var(--color-background-primary)",borderRadius:"var(--border-radius-md)",border:"0.5px solid var(--color-border-tertiary)",borderLeft:"3px solid #63991a",opacity:0.85}}>
+                              <div style={{width:18,height:18,borderRadius:"50%",border:"1.5px solid #63991a",background:"#63991a",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:2}}>
+                                <svg width="9" height="9" viewBox="0 0 9 9"><polyline points="1.5,4.5 3.5,7 7.5,1.5" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                              </div>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+                                  <span style={{fontSize:14,color:"var(--color-text-secondary)",textDecoration:"line-through",wordBreak:"break-word"}}>{task.title}</span>
+                                  {!task.isEveryday&&<Badge p={task.priority}/>}
+                                  {task.isEveryday&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#E6F1FB",color:"#378ADD",border:"0.5px solid #90C7F5",fontWeight:500}}>everyday</span>}
+                                </div>
+                                {task.notes&&<div style={{fontSize:12,color:"var(--color-text-secondary)",marginTop:2,wordBreak:"break-word"}}>{task.notes}</div>}
+                                <div style={{display:"flex",gap:10,marginTop:4,alignItems:"center",flexWrap:"wrap"}}>
+                                  {task.completedAt&&<span style={{fontSize:11,color:"#3B6D11"}}>✓ {new Date(task.completedAt).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",hour12:true})}</span>}
+                                  {task.due&&<span style={{fontSize:11,color:"var(--color-text-secondary)"}}>📅 {fmtDate(task.due)}</span>}
+                                </div>
+                              </div>
+                              <div style={{display:"flex",gap:4,flexShrink:0,opacity:0.5}}>
+                                <button onClick={()=>toggle(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-secondary)"}}>Undo</button>
+                                <button onClick={()=>remove(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-danger)"}}>✕</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    });
+                  })()
+                )
+              ) : (
+                <>
+                  {currentList.length===0&&(
+                    <div style={{textAlign:"center",padding:"3rem 1rem",color:"var(--color-text-secondary)",fontSize:14}}>
+                      {view==="Today"?"No tasks for today — enjoy the day!":view==="Upcoming"?"No upcoming tasks with due dates.":view==="Everyday Tasks"?"No everyday tasks yet.":"No tasks yet — add one above!"}
+                    </div>
+                  )}
+                  {currentList.map((task,i)=>{
+                    const od=isOverdue(task.due)&&!task.done;
+                    const td=isToday(task.due)&&!task.done;
+                    const isOver=overIdx===i;
+                    return (
+                      <div key={task.id} draggable
+                        onDragStart={e=>onDS(e,i)} onDragEnter={()=>onDE(i)}
+                        onDragOver={e=>e.preventDefault()} onDrop={e=>onDrop(e,i,currentList)} onDragEnd={onDEnd}
+                        style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",marginBottom:5,background:"var(--color-background-primary)",borderRadius:"var(--border-radius-md)",border:isOver?"0.5px solid #378ADD":"0.5px solid var(--color-border-tertiary)",opacity:dragIdx===i?0.35:1,cursor:"grab",transition:"border-color 0.12s",borderLeft:task.isEveryday?`3px solid #378ADD`:`3px solid ${od?"#E24B4A":td?"#EF9F27":P[task.priority].dot}`}}>
+                        <div onClick={()=>toggle(task.id)} style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${P[task.priority]?.dot||"#ccc"}`,background:"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,marginTop:2}}/>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+                            <span style={{fontSize:14,color:"var(--color-text-primary)",fontWeight:task.priority==="High"?500:400,wordBreak:"break-word"}}>{task.title}</span>
+                            {!task.isEveryday&&<Badge p={task.priority}/>}
+                            {task.isEveryday&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#E6F1FB",color:"#378ADD",border:"0.5px solid #90C7F5",fontWeight:500}}>everyday</span>}
+                          </div>
+                          {task.notes&&<div style={{fontSize:12,color:"var(--color-text-secondary)",marginTop:2,wordBreak:"break-word"}}>{task.notes}</div>}
+                          <div style={{display:"flex",gap:10,marginTop:4,alignItems:"center",flexWrap:"wrap"}}>
+                            {task.due&&<span style={{fontSize:11,color:od?"#A32D2D":td?"#854F0B":"var(--color-text-secondary)",fontWeight:od||td?500:400}}>{od?"⚠ Overdue · ":""}{fmtDate(task.due)}</span>}
+                            {task.reminder&&<span style={{fontSize:11,color:"var(--color-text-secondary)"}}>⏰ {task.reminder}</span>}
+                          </div>
+                        </div>
+                        <div style={{display:"flex",gap:4,flexShrink:0}}>
+                          <button onClick={()=>toggle(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"#EAF3DE",border:"0.5px solid #97C459",color:"#3B6D11",fontWeight:500}}>✓ Done</button>
+                          <button onClick={()=>startEdit(task)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-secondary)",opacity:0.7}}>Edit</button>
+                          <button onClick={()=>remove(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-danger)",opacity:0.7}}>✕</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
               )}
-
-              {currentList.map((task,i)=>{
-                const od=isOverdue(task.due)&&!task.done;
-                const td=isToday(task.due)&&!task.done;
-                const isOver=overIdx===i;
-                return (
-                  <div key={task.id} draggable
-                    onDragStart={e=>onDS(e,i)} onDragEnter={()=>onDE(i)}
-                    onDragOver={e=>e.preventDefault()} onDrop={e=>onDrop(e,i,currentList)} onDragEnd={onDEnd}
-                    style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",marginBottom:5,background:"var(--color-background-primary)",borderRadius:"var(--border-radius-md)",border:isOver?"0.5px solid #378ADD":"0.5px solid var(--color-border-tertiary)",opacity:dragIdx===i?0.35:1,cursor:"grab",transition:"border-color 0.12s",borderLeft:task.isEveryday?`3px solid #378ADD`:`3px solid ${od?"#E24B4A":td?"#EF9F27":P[task.priority].dot}`}}>
-                    <div onClick={()=>toggle(task.id)} style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${task.done?"#378ADD":P[task.priority].dot}`,background:task.done?"#378ADD":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,marginTop:2}}>
-                      {task.done&&<svg width="9" height="9" viewBox="0 0 9 9"><polyline points="1.5,4.5 3.5,7 7.5,1.5" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
-                    </div>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
-                        <span style={{fontSize:14,color:task.done?"var(--color-text-secondary)":"var(--color-text-primary)",textDecoration:task.done?"line-through":"none",fontWeight:task.priority==="High"&&!task.done?500:400,wordBreak:"break-word"}}>{task.title}</span>
-                        {!task.isEveryday&&<Badge p={task.priority}/>}
-                        {task.isEveryday&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#E6F1FB",color:"#378ADD",border:"0.5px solid #90C7F5",fontWeight:500}}>everyday</span>}
-                      </div>
-                      {task.notes&&<div style={{fontSize:12,color:"var(--color-text-secondary)",marginTop:2,wordBreak:"break-word"}}>{task.notes}</div>}
-                      <div style={{display:"flex",gap:10,marginTop:4,alignItems:"center",flexWrap:"wrap"}}>
-                        {task.due&&<span style={{fontSize:11,color:od?"#A32D2D":td?"#854F0B":"var(--color-text-secondary)",fontWeight:od||td?500:400}}>{od?"⚠ Overdue":""}{od?" · ":""}{fmtDate(task.due)}</span>}
-                        {task.reminder&&<span style={{fontSize:11,color:"var(--color-text-secondary)"}}>⏰ {task.reminder}</span>}
-                      </div>
-                    </div>
-                    <div style={{display:"flex",gap:4,flexShrink:0,opacity:0.6}}>
-                      <button onClick={()=>startEdit(task)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-secondary)"}}>Edit</button>
-                      <button onClick={()=>remove(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-danger)"}}>✕</button>
-                    </div>
-                  </div>
-                );
-              })}
             </div>
           </div>
 
