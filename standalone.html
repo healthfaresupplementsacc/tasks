@@ -160,6 +160,24 @@
     ];
     const EX_CATS=["All","Chest","Back","Legs","Shoulders","Arms","Core","Cardio","Custom"];
 
+    /* ─── FOLDER BACKUP (File System Access API) ───────────────────── */
+    const _IDB_NAME="tasks-fsbkp", _IDB_STORE="handles";
+    function _openIDB(){ return new Promise((res,rej)=>{ const r=indexedDB.open(_IDB_NAME,1); r.onupgradeneeded=e=>e.target.result.createObjectStore(_IDB_STORE); r.onsuccess=e=>res(e.target.result); r.onerror=rej; }); }
+    async function saveFolderHandle(h){ const db=await _openIDB(); return new Promise((res,rej)=>{ const tx=db.transaction(_IDB_STORE,"readwrite"); tx.objectStore(_IDB_STORE).put(h,"folder"); tx.oncomplete=res; tx.onerror=rej; }); }
+    async function loadFolderHandle(){ const db=await _openIDB(); return new Promise((res,rej)=>{ const tx=db.transaction(_IDB_STORE,"readonly"); const r=tx.objectStore(_IDB_STORE).get("folder"); r.onsuccess=e=>res(e.target.result||null); r.onerror=rej; }); }
+    async function ensurePermission(h){ try{ if(await h.queryPermission({mode:"readwrite"})==="granted") return true; return await h.requestPermission({mode:"readwrite"})==="granted"; }catch{ return false; } }
+    async function writeToFolder(h,tasks){
+      if(!h||!await ensurePermission(h)) return false;
+      try{
+        const date=new Date().toISOString().slice(0,10);
+        const fh=await h.getFileHandle(`tasks-backup-${date}.json`,{create:true});
+        const w=await fh.createWritable();
+        await w.write(JSON.stringify(tasks,null,2));
+        await w.close();
+        return true;
+      }catch(e){ console.warn("folder backup failed",e); return false; }
+    }
+
     /* ─── TASK COMPONENTS ──────────────────────────────────────────── */
     function Badge({p}){
       const c=P[p];
@@ -171,7 +189,7 @@
        TASKS APP
     ═══════════════════════════════════════════════════════════════ */
     /* tasks, setS, loaded come from root App — never reset on tab switch */
-    function TasksApp({tasks,setS,loaded,note,onNoteChange}){
+    function TasksApp({tasks,setS,loaded,note,onNoteChange,folderName,lastFolderBackup,onSelectFolder,onManualBackup}){
       const now=useNow();
       const [view,setView]=useState("Today");
       const [showAdd,setShowAdd]=useState(false);
@@ -329,6 +347,22 @@
               <button onClick={()=>setShowBriefing(true)} style={{width:"100%",fontSize:12,padding:"6px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-secondary)",color:"var(--color-text-secondary)",marginBottom:5}}>Daily briefing</button>
               <button onClick={exportData} style={{width:"100%",fontSize:12,padding:"6px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-secondary)",color:"var(--color-text-secondary)",marginBottom:5}}>💾 Export backup</button>
               <button onClick={importData} style={{width:"100%",fontSize:12,padding:"6px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-secondary)",color:"var(--color-text-secondary)"}}>📂 Import backup</button>
+            </div>
+
+            {/* Folder backup */}
+            <div style={{padding:"0.5rem 0.75rem 0",borderTop:"0.5px solid var(--color-border-tertiary)",marginTop:"0.5rem"}}>
+              <div style={{fontSize:10,fontWeight:600,color:"var(--color-text-secondary)",marginBottom:5,textTransform:"uppercase",letterSpacing:"0.04em"}}>📁 Folder Backup</div>
+              {folderName
+                ? <div>
+                    <div style={{fontSize:11,color:"var(--color-text-primary)",fontWeight:500,marginBottom:3,wordBreak:"break-all"}}>📁 {folderName}</div>
+                    <div style={{fontSize:10,color:"var(--color-text-secondary)",marginBottom:6}}>Last: {lastFolderBackup===todayStr()?"Today":lastFolderBackup||"Never"}</div>
+                    <div style={{display:"flex",gap:5}}>
+                      <button onClick={onManualBackup} style={{flex:1,fontSize:11,padding:"5px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"#EAF3DE",border:"0.5px solid #97C459",color:"#3B6D11",fontWeight:500}}>Save now</button>
+                      <button onClick={onSelectFolder} style={{fontSize:11,padding:"5px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-secondary)",color:"var(--color-text-secondary)"}}>Change</button>
+                    </div>
+                  </div>
+                : <button onClick={onSelectFolder} style={{width:"100%",fontSize:12,padding:"6px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px dashed #378ADD",color:"#378ADD"}}>Choose folder…</button>
+              }
             </div>
 
             {/* Notes area */}
@@ -1088,22 +1122,70 @@
       const [note,setNote]=useState("");
       const [tasks,setTasksRaw]=useState([]);
       const [loaded,setLoaded]=useState(false);
+      const [folderName,setFolderName]=useState(null);
+      const [lastFolderBackup,setLastFolderBackup]=useState(()=>localStorage.getItem("last_folder_bkp")||null);
       const saveNoteRef=useRef(null);
       const loadedRef=useRef(false); /* guards against writing empty state before load */
+      const folderRef=useRef(null);
 
       useEffect(()=>{
         (async()=>{
-          try{ const r=await window.storage.get("tasks_v3"); if(r?.value) setTasksRaw(JSON.parse(r.value)); }catch{}
+          /* ── load tasks with auto-recovery from backup key ── */
+          try{
+            const r=await window.storage.get("tasks_v3");
+            const parsed=r?.value?JSON.parse(r.value):[];
+            if(parsed.length>0){
+              setTasksRaw(parsed);
+              /* keep backup in sync whenever primary has data */
+              localStorage.setItem("tasks_v3_bak",r.value);
+            } else {
+              /* primary is empty — try the backup before giving up */
+              const bak=localStorage.getItem("tasks_v3_bak");
+              if(bak){ const bp=JSON.parse(bak); if(bp.length>0){ console.log("[tasks] recovered",bp.length,"tasks from backup"); setTasksRaw(bp); await window.storage.set("tasks_v3",bak); } }
+            }
+          }catch(e){ console.error("[tasks] load error",e); try{ const bak=localStorage.getItem("tasks_v3_bak"); if(bak){ const bp=JSON.parse(bak); if(bp.length>0){ setTasksRaw(bp); await window.storage.set("tasks_v3",bak); } } }catch{} }
           try{ const r=await window.storage.get("app_note"); if(r?.value) setNote(r.value); }catch{}
+          try{ const h=await loadFolderHandle(); if(h){ folderRef.current=h; setFolderName(h.name); } }catch{}
           loadedRef.current=true;
           setLoaded(true);
         })();
       },[]);
 
+      /* auto folder-backup: once per day when the page is open */
+      useEffect(()=>{
+        if(!loaded||!folderRef.current) return;
+        const today=todayStr();
+        if(lastFolderBackup===today) return;
+        (async()=>{
+          const ok=await writeToFolder(folderRef.current,tasks);
+          if(ok){ localStorage.setItem("last_folder_bkp",today); setLastFolderBackup(today); }
+        })();
+      },[loaded,folderRef.current,tasks.length]);
+
+      const selectBackupFolder=async()=>{
+        if(!window.showDirectoryPicker){ alert("Your browser doesn't support folder picking (use Chrome or Edge)."); return; }
+        try{
+          const h=await window.showDirectoryPicker({mode:"readwrite"});
+          folderRef.current=h; setFolderName(h.name); await saveFolderHandle(h);
+          const ok=await writeToFolder(h,tasks);
+          if(ok){ const today=todayStr(); localStorage.setItem("last_folder_bkp",today); setLastFolderBackup(today); alert(`Backup folder set to "${h.name}" and first backup saved!`); }
+        }catch(e){ if(e.name!=="AbortError") alert("Couldn't access folder: "+e.message); }
+      };
+
+      const manualFolderBackup=async()=>{
+        if(!folderRef.current){ alert("No backup folder selected yet."); return; }
+        const ok=await writeToFolder(folderRef.current,tasks);
+        if(ok){ const today=todayStr(); localStorage.setItem("last_folder_bkp",today); setLastFolderBackup(today); alert("Backup saved to folder!"); }
+        else alert("Backup failed — try re-selecting the folder.");
+      };
+
       /* persist only fires after initial load — can never overwrite with empty [] */
       const persist=useCallback(async t=>{
         if(!loadedRef.current) return;
-        try{ await window.storage.set("tasks_v3",JSON.stringify(t)); }catch{}
+        const json=JSON.stringify(t);
+        try{ await window.storage.set("tasks_v3",json); }catch{}
+        /* backup key — only write when there's actual data so it never gets blanked */
+        try{ if(t.length>0) localStorage.setItem("tasks_v3_bak",json); }catch{}
       },[]);
 
       const setS=useCallback(fn=>setTasksRaw(p=>{ const n=typeof fn==="function"?fn(p):fn; persist(n); return n; }),[persist]);
@@ -1132,7 +1214,7 @@
             ))}
           </div>
 
-          {activeTab==="tasks"   && <TasksApp tasks={tasks} setS={setS} loaded={loaded} note={note} onNoteChange={handleNoteChange}/>}
+          {activeTab==="tasks"   && <TasksApp tasks={tasks} setS={setS} loaded={loaded} note={note} onNoteChange={handleNoteChange} folderName={folderName} lastFolderBackup={lastFolderBackup} onSelectFolder={selectBackupFolder} onManualBackup={manualFolderBackup}/>}
           {activeTab==="fitness" && <WorkoutApp/>}
         </div>
       );
