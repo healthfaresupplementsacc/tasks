@@ -170,9 +170,9 @@
     /* ═══════════════════════════════════════════════════════════════
        TASKS APP
     ═══════════════════════════════════════════════════════════════ */
-    function TasksApp({note,onNoteChange}){
+    /* tasks, setS, loaded come from root App — never reset on tab switch */
+    function TasksApp({tasks,setS,loaded,note,onNoteChange}){
       const now=useNow();
-      const [tasks,setTasks]=useState([]);
       const [view,setView]=useState("Today");
       const [showAdd,setShowAdd]=useState(false);
       const [quickInput,setQuickInput]=useState("");
@@ -185,22 +185,16 @@
       const [selDay,setSelDay]=useState(null);
       const [dragIdx,setDragIdx]=useState(null);
       const [overIdx,setOverIdx]=useState(null);
-      const [loaded,setLoaded]=useState(false);
       const dragRef=useRef(null);
 
       useEffect(()=>{
         (async()=>{
-          try{ const r=await window.storage.get("tasks_v3"); if(r?.value) setTasks(JSON.parse(r.value)); }catch{}
           try{
             const lr=await window.storage.get("briefing_date");
             if(!lr||lr.value!==todayStr()){ setShowBriefing(true); await window.storage.set("briefing_date",todayStr()); }
           }catch{ setShowBriefing(true); }
-          setLoaded(true);
         })();
       },[]);
-
-      const persist=useCallback(async t=>{ try{ await window.storage.set("tasks_v3",JSON.stringify(t)); }catch{} },[]);
-      const setS=fn=>setTasks(p=>{ const n=typeof fn==="function"?fn(p):fn; persist(n); return n; });
 
       const submit=()=>{
         if(!form.title.trim()) return;
@@ -1092,11 +1086,27 @@
     function App(){
       const [activeTab,setActiveTab]=useState("tasks");
       const [note,setNote]=useState("");
+      const [tasks,setTasksRaw]=useState([]);
+      const [loaded,setLoaded]=useState(false);
       const saveNoteRef=useRef(null);
+      const loadedRef=useRef(false); /* guards against writing empty state before load */
 
       useEffect(()=>{
-        (async()=>{ try{ const r=await window.storage.get("app_note"); if(r?.value) setNote(r.value); }catch{} })();
+        (async()=>{
+          try{ const r=await window.storage.get("tasks_v3"); if(r?.value) setTasksRaw(JSON.parse(r.value)); }catch{}
+          try{ const r=await window.storage.get("app_note"); if(r?.value) setNote(r.value); }catch{}
+          loadedRef.current=true;
+          setLoaded(true);
+        })();
       },[]);
+
+      /* persist only fires after initial load — can never overwrite with empty [] */
+      const persist=useCallback(async t=>{
+        if(!loadedRef.current) return;
+        try{ await window.storage.set("tasks_v3",JSON.stringify(t)); }catch{}
+      },[]);
+
+      const setS=useCallback(fn=>setTasksRaw(p=>{ const n=typeof fn==="function"?fn(p):fn; persist(n); return n; }),[persist]);
 
       const handleNoteChange=val=>{
         setNote(val);
@@ -1122,7 +1132,7 @@
             ))}
           </div>
 
-          {activeTab==="tasks"   && <TasksApp note={note} onNoteChange={handleNoteChange}/>}
+          {activeTab==="tasks"   && <TasksApp tasks={tasks} setS={setS} loaded={loaded} note={note} onNoteChange={handleNoteChange}/>}
           {activeTab==="fitness" && <WorkoutApp/>}
         </div>
       );
