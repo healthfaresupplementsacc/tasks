@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Tasks</title>
+  <title>Dashboard</title>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -46,15 +46,17 @@
     #root > div {
       width: 100%;
       max-width: 1100px;
-      min-height: 600px;
       box-shadow: 0 4px 24px rgba(0,0,0,0.08);
     }
+
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
   </style>
 </head>
 <body>
   <div id="root"></div>
   <script>
-    // window.storage polyfill — mirrors Claude artifact API using localStorage
     window.storage = {
       async get(key) {
         const value = localStorage.getItem(key);
@@ -69,41 +71,107 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const P = {
-      High:   { label:"High",   dot:"#E24B4A", bg:"#FCEBEB", text:"#A32D2D", border:"#F09595" },
-      Medium: { label:"Medium", dot:"#EF9F27", bg:"#FAEEDA", text:"#854F0B", border:"#FAC775" },
-      Low:    { label:"Low",    dot:"#63991a", bg:"#EAF3DE", text:"#3B6D11", border:"#97C459" },
-    };
-
-    const VIEWS = ["Today","Upcoming","Everyday Tasks","Completed"];
-    const VIEW_ICONS = { Today:"☀", Upcoming:"📅", "Everyday Tasks":"∞", Completed:"✓" };
-
+    /* ─── SHARED UTILITIES ─────────────────────────────────────────── */
     function genId(){ return Math.random().toString(36).slice(2,9); }
     function todayStr(){ return new Date().toISOString().slice(0,10); }
     function toDS(y,m,d){ return `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`; }
     function fmtDate(d){
       if(!d) return "";
-      const dt = new Date(d+"T12:00:00");
-      const t = todayStr();
+      const t=todayStr();
       if(d===t) return "Today";
-      const tom = new Date(); tom.setDate(tom.getDate()+1);
+      const tom=new Date(); tom.setDate(tom.getDate()+1);
       if(d===tom.toISOString().slice(0,10)) return "Tomorrow";
-      return dt.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+      return new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"});
     }
-    function isOverdue(d){ return !!d && d < todayStr(); }
+    function isOverdue(d){ return !!d && d<todayStr(); }
     function isToday(d){ return d===todayStr(); }
+    function useNow(){
+      const [n,sN]=useState(new Date());
+      useEffect(()=>{ const i=setInterval(()=>sN(new Date()),1000); return()=>clearInterval(i); },[]);
+      return n;
+    }
 
-    function useNow(){ const [n,sN]=useState(new Date()); useEffect(()=>{const i=setInterval(()=>sN(new Date()),1000);return()=>clearInterval(i);},[]);return n; }
+    /* ─── TASK MANAGER CONSTANTS ───────────────────────────────────── */
+    const P={
+      High:  {label:"High",  dot:"#E24B4A",bg:"#FCEBEB",text:"#A32D2D",border:"#F09595"},
+      Medium:{label:"Medium",dot:"#EF9F27",bg:"#FAEEDA",text:"#854F0B",border:"#FAC775"},
+      Low:   {label:"Low",   dot:"#63991a",bg:"#EAF3DE",text:"#3B6D11",border:"#97C459"},
+    };
+    const VIEWS=["Today","Upcoming","Everyday Tasks","Completed"];
+    const VIEW_ICONS={Today:"☀",Upcoming:"📅","Everyday Tasks":"∞",Completed:"✓"};
 
+    /* ─── FITNESS CONSTANTS ────────────────────────────────────────── */
+    const DEFAULT_EXERCISES=[
+      {id:"e1", name:"Bench Press",       category:"Chest",     type:"Barbell"},
+      {id:"e2", name:"Incline Bench Press",category:"Chest",    type:"Barbell"},
+      {id:"e3", name:"Dumbbell Fly",      category:"Chest",     type:"Dumbbell"},
+      {id:"e4", name:"Push-up",           category:"Chest",     type:"Bodyweight"},
+      {id:"e5", name:"Cable Crossover",   category:"Chest",     type:"Cable"},
+      {id:"e6", name:"Deadlift",          category:"Back",      type:"Barbell"},
+      {id:"e7", name:"Pull-up",           category:"Back",      type:"Bodyweight"},
+      {id:"e8", name:"Barbell Row",       category:"Back",      type:"Barbell"},
+      {id:"e9", name:"Lat Pulldown",      category:"Back",      type:"Cable"},
+      {id:"e10",name:"Seated Cable Row",  category:"Back",      type:"Cable"},
+      {id:"e11",name:"Dumbbell Row",      category:"Back",      type:"Dumbbell"},
+      {id:"e12",name:"Squat",             category:"Legs",      type:"Barbell"},
+      {id:"e13",name:"Leg Press",         category:"Legs",      type:"Machine"},
+      {id:"e14",name:"Leg Extension",     category:"Legs",      type:"Machine"},
+      {id:"e15",name:"Leg Curl",          category:"Legs",      type:"Machine"},
+      {id:"e16",name:"Romanian Deadlift", category:"Legs",      type:"Barbell"},
+      {id:"e17",name:"Calf Raise",        category:"Legs",      type:"Machine"},
+      {id:"e18",name:"Lunge",             category:"Legs",      type:"Bodyweight"},
+      {id:"e19",name:"Overhead Press",    category:"Shoulders", type:"Barbell"},
+      {id:"e20",name:"Lateral Raise",     category:"Shoulders", type:"Dumbbell"},
+      {id:"e21",name:"Arnold Press",      category:"Shoulders", type:"Dumbbell"},
+      {id:"e22",name:"Face Pull",         category:"Shoulders", type:"Cable"},
+      {id:"e23",name:"Front Raise",       category:"Shoulders", type:"Dumbbell"},
+      {id:"e24",name:"Barbell Curl",      category:"Arms",      type:"Barbell"},
+      {id:"e25",name:"Dumbbell Curl",     category:"Arms",      type:"Dumbbell"},
+      {id:"e26",name:"Tricep Pushdown",   category:"Arms",      type:"Cable"},
+      {id:"e27",name:"Skull Crusher",     category:"Arms",      type:"Barbell"},
+      {id:"e28",name:"Hammer Curl",       category:"Arms",      type:"Dumbbell"},
+      {id:"e29",name:"Dip",               category:"Arms",      type:"Bodyweight"},
+      {id:"e30",name:"Plank",             category:"Core",      type:"Bodyweight"},
+      {id:"e31",name:"Crunch",            category:"Core",      type:"Bodyweight"},
+      {id:"e32",name:"Russian Twist",     category:"Core",      type:"Bodyweight"},
+      {id:"e33",name:"Leg Raise",         category:"Core",      type:"Bodyweight"},
+      {id:"e34",name:"Cable Crunch",      category:"Core",      type:"Cable"},
+      {id:"e35",name:"Running",           category:"Cardio",    type:"Cardio"},
+      {id:"e36",name:"Cycling",           category:"Cardio",    type:"Cardio"},
+      {id:"e37",name:"Jump Rope",         category:"Cardio",    type:"Cardio"},
+      {id:"e38",name:"Rowing Machine",    category:"Cardio",    type:"Cardio"},
+    ];
+    const CAT_COLORS={
+      Chest:    {bg:"#FDE8E8",color:"#9B1C1C",border:"#FCA5A5",dot:"#E24B4A"},
+      Back:     {bg:"#E8F5E9",color:"#1B5E20",border:"#A5D6A7",dot:"#388E3C"},
+      Legs:     {bg:"#E3F2FD",color:"#0D47A1",border:"#90CAF9",dot:"#1976D2"},
+      Shoulders:{bg:"#FFF3E0",color:"#E65100",border:"#FFCC80",dot:"#EF9F27"},
+      Arms:     {bg:"#F3E5F5",color:"#4A148C",border:"#CE93D8",dot:"#7B1FA2"},
+      Core:     {bg:"#E8EAF6",color:"#1A237E",border:"#9FA8DA",dot:"#3949AB"},
+      Cardio:   {bg:"#FCE4EC",color:"#880E4F",border:"#F48FB1",dot:"#C2185B"},
+      Custom:   {bg:"#F5F5F5",color:"#424242",border:"#BDBDBD",dot:"#757575"},
+    };
+    const WORKOUT_TEMPLATES=[
+      {name:"Push Day",   exercises:["Bench Press","Overhead Press","Incline Bench Press","Lateral Raise","Tricep Pushdown","Dip"]},
+      {name:"Pull Day",   exercises:["Deadlift","Pull-up","Barbell Row","Lat Pulldown","Dumbbell Curl","Hammer Curl"]},
+      {name:"Leg Day",    exercises:["Squat","Leg Press","Romanian Deadlift","Leg Curl","Leg Extension","Calf Raise"]},
+      {name:"Upper Body", exercises:["Bench Press","Barbell Row","Overhead Press","Pull-up","Dumbbell Curl","Tricep Pushdown"]},
+      {name:"Full Body",  exercises:["Squat","Bench Press","Deadlift","Overhead Press","Barbell Row","Dip"]},
+    ];
+    const EX_CATS=["All","Chest","Back","Legs","Shoulders","Arms","Core","Cardio","Custom"];
+
+    /* ─── TASK COMPONENTS ──────────────────────────────────────────── */
     function Badge({p}){
       const c=P[p];
       return <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:c.bg,color:c.text,border:`0.5px solid ${c.border}`,fontWeight:500,whiteSpace:"nowrap"}}>{p}</span>;
     }
-
     function Dot({p}){ return <span style={{width:8,height:8,borderRadius:"50%",background:P[p].dot,display:"inline-block",flexShrink:0}}/>; }
 
-    function App(){
-      const now = useNow();
+    /* ═══════════════════════════════════════════════════════════════
+       TASKS APP
+    ═══════════════════════════════════════════════════════════════ */
+    function TasksApp({note,onNoteChange}){
+      const now=useNow();
       const [tasks,setTasks]=useState([]);
       const [view,setView]=useState("Today");
       const [showAdd,setShowAdd]=useState(false);
@@ -127,18 +195,6 @@
             const lr=await window.storage.get("briefing_date");
             if(!lr||lr.value!==todayStr()){ setShowBriefing(true); await window.storage.set("briefing_date",todayStr()); }
           }catch{ setShowBriefing(true); }
-          try {
-            const existing = await window.storage.get("tasks_v3");
-            const cur = existing?.value ? JSON.parse(existing.value) : [];
-            const today = todayStr();
-            const seed = [
-              { id: genId(), title: "Payroll", priority: "High", due: today, reminder: "19:00", notes: "", done: false, createdAt: Date.now() },
-              { id: genId(), title: "Dispute", priority: "High", due: today, reminder: "19:00", notes: "", done: false, createdAt: Date.now()-1 },
-            ];
-            const merged = [...seed, ...cur];
-            setTasks(merged);
-            await window.storage.set("tasks_v3", JSON.stringify(merged));
-          } catch {}
           setLoaded(true);
         })();
       },[]);
@@ -160,75 +216,32 @@
       const startEdit=t=>{ setForm({title:t.title,priority:t.priority,due:t.due||"",notes:t.notes||"",reminder:t.reminder||"",isEveryday:!!t.isEveryday}); setEditId(t.id); setShowAdd(true); };
 
       const exportData=()=>{
-        const data=JSON.stringify(tasks,null,2);
-        const blob=new Blob([data],{type:"application/json"});
+        const blob=new Blob([JSON.stringify(tasks,null,2)],{type:"application/json"});
         const url=URL.createObjectURL(blob);
-        const a=document.createElement("a");
-        a.href=url;
-        a.download=`tasks-backup-${todayStr()}.json`;
-        a.click();
+        const a=document.createElement("a"); a.href=url; a.download=`tasks-backup-${todayStr()}.json`; a.click();
         URL.revokeObjectURL(url);
       };
-
       const importData=()=>{
-        const input=document.createElement("input");
-        input.type="file";
-        input.accept=".json";
+        const input=document.createElement("input"); input.type="file"; input.accept=".json";
         input.onchange=async e=>{
-          const file=e.target.files[0];
-          if(!file) return;
-          const text=await file.text();
-          try{
-            const imported=JSON.parse(text);
-            if(Array.isArray(imported)){ setS(imported); alert(`Imported ${imported.length} tasks successfully!`); }
-          }catch{ alert("Invalid backup file."); }
+          const file=e.target.files[0]; if(!file) return;
+          try{ const imported=JSON.parse(await file.text()); if(Array.isArray(imported)){ setS(imported); alert(`Imported ${imported.length} tasks!`); } }
+          catch{ alert("Invalid backup file."); }
         };
         input.click();
       };
 
       const parseTask=input=>{
         if(!input.trim()) return null;
-        let text=input.trim();
-        let priority="Medium";
-        let due=null;
-        let reminder=null;
+        let text=input.trim(), priority="Medium", due=null, reminder=null;
         const today=new Date();
-        if(/\b(urgent|asap|high|important)\b/i.test(text)){
-          priority="High";
-          text=text.replace(/\b(urgent|asap|high|important)\b/gi,"").trim();
-        }else if(/\blow\b/i.test(text)){
-          priority="Low";
-          text=text.replace(/\blow\b/gi,"").trim();
-        }
-        const timeMatch=text.match(/\b(\d{1,2})\s?(am|pm|:\d{2})\b/i);
-        if(timeMatch){
-          const hr=parseInt(timeMatch[1]);
-          const isPM=timeMatch[2].toLowerCase().includes("pm");
-          const mins=timeMatch[2].match(/:(\d{2})/)?.[1]||"00";
-          reminder=`${isPM&&hr<12?hr+12:hr===12&&!isPM?0:hr}:${mins}`.padStart(5,"0");
-          text=text.replace(timeMatch[0],"").trim();
-        }
-        if(/\btoday\b/i.test(text)){
-          due=todayStr();
-          text=text.replace(/\btoday\b/gi,"").trim();
-        }else if(/\btomorrow\b/i.test(text)){
-          const tom=new Date(today);
-          tom.setDate(tom.getDate()+1);
-          due=tom.toISOString().slice(0,10);
-          text=text.replace(/\btomorrow\b/gi,"").trim();
-        }else{
-          const days=["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
-          const dayMatch=text.match(new RegExp(`\\b(${days.join("|")})\\b`,"i"));
-          if(dayMatch){
-            const targetDay=days.indexOf(dayMatch[1].toLowerCase());
-            const currentDay=today.getDay();
-            const daysAhead=(targetDay-currentDay+7)%7||7;
-            const targetDate=new Date(today);
-            targetDate.setDate(targetDate.getDate()+daysAhead);
-            due=targetDate.toISOString().slice(0,10);
-            text=text.replace(dayMatch[0],"").trim();
-          }
-        }
+        if(/\b(urgent|asap|high|important)\b/i.test(text)){ priority="High"; text=text.replace(/\b(urgent|asap|high|important)\b/gi,"").trim(); }
+        else if(/\blow\b/i.test(text)){ priority="Low"; text=text.replace(/\blow\b/gi,"").trim(); }
+        const tm=text.match(/\b(\d{1,2})\s?(am|pm|:\d{2})\b/i);
+        if(tm){ const hr=parseInt(tm[1]),isPM=tm[2].toLowerCase().includes("pm"),mins=tm[2].match(/:(\d{2})/)?.[1]||"00"; reminder=`${isPM&&hr<12?hr+12:hr===12&&!isPM?0:hr}:${mins}`.padStart(5,"0"); text=text.replace(tm[0],"").trim(); }
+        if(/\btoday\b/i.test(text)){ due=todayStr(); text=text.replace(/\btoday\b/gi,"").trim(); }
+        else if(/\btomorrow\b/i.test(text)){ const tom=new Date(today); tom.setDate(tom.getDate()+1); due=tom.toISOString().slice(0,10); text=text.replace(/\btomorrow\b/gi,"").trim(); }
+        else{ const days=["sunday","monday","tuesday","wednesday","thursday","friday","saturday"]; const dm=text.match(new RegExp(`\\b(${days.join("|")})\\b`,"i")); if(dm){ const td=days.indexOf(dm[1].toLowerCase()),cd=today.getDay(),da=(td-cd+7)%7||7,dt=new Date(today); dt.setDate(dt.getDate()+da); due=dt.toISOString().slice(0,10); text=text.replace(dm[0],"").trim(); } }
         text=text.replace(/\s+/g," ").trim();
         return {title:text,priority,due,reminder,isEveryday:!due};
       };
@@ -238,10 +251,8 @@
       const addQuickTask=()=>{
         const parsed=parseTask(quickInput);
         if(!parsed||!parsed.title) return;
-        const t={id:genId(),...parsed,notes:"",done:false,createdAt:Date.now()};
-        setS(p=>[t,...p]);
-        setQuickInput("");
-        setParsedPreview(null);
+        setS(p=>[{id:genId(),...parsed,notes:"",done:false,createdAt:Date.now()},...p]);
+        setQuickInput(""); setParsedPreview(null);
       };
 
       const onDS=(e,i)=>{ dragRef.current=i; setDragIdx(i); e.dataTransfer.effectAllowed="move"; };
@@ -250,12 +261,9 @@
         e.preventDefault();
         const from=dragRef.current;
         if(from===i){ setDragIdx(null); setOverIdx(null); return; }
-        const arr=[...list];
-        const [mv]=arr.splice(from,1);
-        arr.splice(i,0,mv);
+        const arr=[...list]; const [mv]=arr.splice(from,1); arr.splice(i,0,mv);
         const ids=arr.map(t=>t.id);
-        const rest=tasks.filter(t=>!ids.includes(t.id));
-        setS([...arr,...rest]);
+        setS([...arr,...tasks.filter(t=>!ids.includes(t.id))]);
         setDragIdx(null); setOverIdx(null);
       };
       const onDEnd=()=>{ setDragIdx(null); setOverIdx(null); };
@@ -265,8 +273,7 @@
       const todayTasks=active.filter(t=>!t.isEveryday&&(isToday(t.due)||t.priority==="High")).sort((a,b)=>{ if(a.priority===b.priority) return (a.due||"z").localeCompare(b.due||"z"); return Object.keys(P).indexOf(a.priority)-Object.keys(P).indexOf(b.priority); });
       const upcoming=active.filter(t=>!t.isEveryday&&t.due&&t.due>todayStr()).sort((a,b)=>a.due.localeCompare(b.due));
       const completed=tasks.filter(t=>t.done).sort((a,b)=>new Date(b.completedAt||0)-new Date(a.completedAt||0));
-
-      const listMap={ Today:todayTasks, Upcoming:upcoming, "Everyday Tasks":everydayTasks, Completed:completed };
+      const listMap={Today:todayTasks,Upcoming:upcoming,"Everyday Tasks":everydayTasks,Completed:completed};
       const currentList=listMap[view]||[];
 
       const firstDay=new Date(calYear,calMonth,1).getDay();
@@ -286,15 +293,15 @@
       const ampm=hh>=12?"PM":"AM"; const h12=hh%12||12;
       const greeting=hh<12?"Good morning":hh<17?"Good afternoon":"Good evening";
 
-      if(!loaded) return <div style={{padding:"2rem",color:"var(--color-text-secondary)",fontSize:14}}>Loading your tasks...</div>;
+      if(!loaded) return <div style={{padding:"2rem",color:"var(--color-text-secondary)",fontSize:14}}>Loading your tasks…</div>;
 
       const SB_W=180;
 
       return (
-        <div style={{display:"flex",minHeight:520,fontFamily:"var(--font-sans)",background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-lg)",overflow:"hidden"}}>
+        <div style={{display:"flex",minHeight:520,fontFamily:"var(--font-sans)",background:"var(--color-background-primary)"}}>
 
-          {/* SIDEBAR */}
-          <div style={{width:SB_W,flexShrink:0,background:"var(--color-background-secondary)",borderRight:"0.5px solid var(--color-border-tertiary)",display:"flex",flexDirection:"column",padding:"0 0 1rem"}}>
+          {/* ── SIDEBAR ── */}
+          <div style={{width:SB_W,flexShrink:0,background:"var(--color-background-secondary)",borderRight:"0.5px solid var(--color-border-tertiary)",display:"flex",flexDirection:"column",padding:"0 0 0.5rem"}}>
             <div style={{padding:"1.25rem 1rem 1rem",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
               <div style={{fontSize:24,fontWeight:500,color:"var(--color-text-primary)",fontVariantNumeric:"tabular-nums",lineHeight:1}}>{h12}:{mm} <span style={{fontSize:13,fontWeight:400,color:"var(--color-text-secondary)"}}>{ampm}</span></div>
               <div style={{fontSize:11,color:"var(--color-text-secondary)",marginTop:4}}>{now.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</div>
@@ -302,7 +309,7 @@
 
             <div style={{padding:"0.75rem 0.5rem",flex:1}}>
               {VIEWS.map(v=>{
-                const cnt = v==="Today"?todayTasks.length:v==="Upcoming"?upcoming.length:v==="Everyday Tasks"?everydayTasks.length:completed.length;
+                const cnt=v==="Today"?todayTasks.length:v==="Upcoming"?upcoming.length:v==="Everyday Tasks"?everydayTasks.length:completed.length;
                 return (
                   <div key={v} onClick={()=>setView(v)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 10px",borderRadius:"var(--border-radius-md)",marginBottom:2,cursor:"pointer",background:view===v?"var(--color-background-primary)":"transparent",border:view===v?"0.5px solid var(--color-border-secondary)":"0.5px solid transparent"}}>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -316,27 +323,33 @@
             </div>
 
             <div style={{padding:"0 0.75rem",borderTop:"0.5px solid var(--color-border-tertiary)",paddingTop:"0.75rem"}}>
-              {[
-                {label:"Overdue", val:overdueCnt, color:"#A32D2D"},
-                {label:"Due today", val:todayCnt, color:"#854F0B"},
-                {label:"High priority", val:highCnt, color:"#533000"},
-                {label:"Everyday tasks", val:everydayCnt, color:"#378ADD"},
-              ].map(s=>(
-                <div key={s.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 6px",marginBottom:2}}>
+              {[{label:"Overdue",val:overdueCnt,color:"#A32D2D"},{label:"Due today",val:todayCnt,color:"#854F0B"},{label:"High priority",val:highCnt,color:"#533000"},{label:"Everyday tasks",val:everydayCnt,color:"#378ADD"}].map(s=>(
+                <div key={s.label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"3px 6px",marginBottom:2}}>
                   <span style={{fontSize:11,color:"var(--color-text-secondary)"}}>{s.label}</span>
                   <span style={{fontSize:11,fontWeight:500,color:s.val>0?s.color:"var(--color-text-secondary)"}}>{s.val}</span>
                 </div>
               ))}
             </div>
 
-            <div style={{padding:"0.75rem 0.75rem 0"}}>
-              <button onClick={()=>setShowBriefing(true)} style={{width:"100%",fontSize:12,padding:"6px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-secondary)",color:"var(--color-text-secondary)",marginBottom:6}}>Daily briefing</button>
-              <button onClick={exportData} style={{width:"100%",fontSize:12,padding:"6px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-secondary)",color:"var(--color-text-secondary)",marginBottom:6}}>💾 Export backup</button>
+            <div style={{padding:"0.6rem 0.75rem 0"}}>
+              <button onClick={()=>setShowBriefing(true)} style={{width:"100%",fontSize:12,padding:"6px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-secondary)",color:"var(--color-text-secondary)",marginBottom:5}}>Daily briefing</button>
+              <button onClick={exportData} style={{width:"100%",fontSize:12,padding:"6px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-secondary)",color:"var(--color-text-secondary)",marginBottom:5}}>💾 Export backup</button>
               <button onClick={importData} style={{width:"100%",fontSize:12,padding:"6px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-secondary)",color:"var(--color-text-secondary)"}}>📂 Import backup</button>
+            </div>
+
+            {/* Notes area */}
+            <div style={{padding:"0.6rem 0.75rem 0.75rem",borderTop:"0.5px solid var(--color-border-tertiary)",marginTop:"0.6rem"}}>
+              <div style={{fontSize:10,fontWeight:600,color:"var(--color-text-secondary)",marginBottom:5,textTransform:"uppercase",letterSpacing:"0.04em"}}>📝 Notes</div>
+              <textarea
+                value={note}
+                onChange={e=>onNoteChange(e.target.value)}
+                placeholder="Quick notes — saved instantly…"
+                style={{width:"100%",boxSizing:"border-box",fontSize:12,padding:"7px 8px",borderRadius:"var(--border-radius-md)",border:"0.5px solid var(--color-border-secondary)",background:"var(--color-background-primary)",color:"var(--color-text-primary)",resize:"none",height:88,fontFamily:"var(--font-sans)",lineHeight:1.5,outline:"none"}}
+              />
             </div>
           </div>
 
-          {/* MAIN */}
+          {/* ── MAIN ── */}
           <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0}}>
             <div style={{padding:"1rem 1.25rem",borderBottom:"0.5px solid var(--color-border-tertiary)",background:"var(--color-background-secondary)"}}>
               <div style={{position:"relative"}}>
@@ -370,7 +383,7 @@
 
             {showAdd&&(
               <div style={{margin:"0.75rem 1.25rem",background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-secondary)",borderRadius:"var(--border-radius-lg)",padding:"1rem"}}>
-                <input placeholder={form.isEveryday?'Type anything — "Drink water" (no date = everyday task)':"What needs to be done?"} value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&submit()} autoFocus
+                <input placeholder={form.isEveryday?'e.g. "Drink water" (no date = everyday task)':"What needs to be done?"} value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&submit()} autoFocus
                   style={{width:"100%",boxSizing:"border-box",fontSize:14,padding:"8px 10px",borderRadius:"var(--border-radius-md)",border:"0.5px solid var(--color-border-secondary)",background:"var(--color-background-primary)",color:"var(--color-text-primary)",marginBottom:10}}/>
                 <div style={{marginBottom:10}}>
                   <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:12,color:"var(--color-text-secondary)"}}>
@@ -407,83 +420,74 @@
                     <span>♾️ Everyday Tasks</span>
                     <span style={{fontSize:10,background:"#E6F1FB",color:"#378ADD",padding:"1px 6px",borderRadius:10}}>{everydayTasks.length}</span>
                   </div>
-                  {everydayTasks.map((task,i)=>{
-                    const isOver=overIdx===i;
-                    return (
-                      <div key={task.id} draggable
-                        onDragStart={e=>onDS(e,i)} onDragEnter={()=>onDE(i)}
-                        onDragOver={e=>e.preventDefault()} onDrop={e=>onDrop(e,i,everydayTasks)} onDragEnd={onDEnd}
-                        style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",marginBottom:5,background:"var(--color-background-primary)",borderRadius:"var(--border-radius-md)",border:isOver?"0.5px solid #378ADD":"0.5px solid var(--color-border-tertiary)",opacity:dragIdx===i?0.35:1,cursor:"grab",transition:"border-color 0.12s",borderLeft:"3px solid #378ADD"}}>
-                        <div onClick={()=>toggle(task.id)} style={{width:18,height:18,borderRadius:"50%",border:"1.5px solid #378ADD",background:task.done?"#378ADD":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,marginTop:2}}>
-                          {task.done&&<svg width="9" height="9" viewBox="0 0 9 9"><polyline points="1.5,4.5 3.5,7 7.5,1.5" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
-                        </div>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
-                            <span style={{fontSize:14,color:task.done?"var(--color-text-secondary)":"var(--color-text-primary)",textDecoration:task.done?"line-through":"none",wordBreak:"break-word"}}>{task.title}</span>
-                            <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#E6F1FB",color:"#378ADD",border:"0.5px solid #90C7F5",fontWeight:500}}>everyday</span>
-                          </div>
-                          {task.notes&&<div style={{fontSize:12,color:"var(--color-text-secondary)",marginTop:2,wordBreak:"break-word"}}>{task.notes}</div>}
-                        </div>
-                        <div style={{display:"flex",gap:4,flexShrink:0,opacity:0.6}}>
-                          <button onClick={()=>toggle(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"#EAF3DE",border:"0.5px solid #97C459",color:"#3B6D11"}}>✓ Done</button>
-                          <button onClick={()=>startEdit(task)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-secondary)"}}>Edit</button>
-                          <button onClick={()=>remove(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-danger)"}}>✕</button>
-                        </div>
+                  {everydayTasks.map((task,i)=>(
+                    <div key={task.id} draggable
+                      onDragStart={e=>onDS(e,i)} onDragEnter={()=>onDE(i)}
+                      onDragOver={e=>e.preventDefault()} onDrop={e=>onDrop(e,i,everydayTasks)} onDragEnd={onDEnd}
+                      style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",marginBottom:5,background:"var(--color-background-primary)",borderRadius:"var(--border-radius-md)",border:overIdx===i?"0.5px solid #378ADD":"0.5px solid var(--color-border-tertiary)",opacity:dragIdx===i?0.35:1,cursor:"grab",transition:"border-color 0.12s",borderLeft:"3px solid #378ADD"}}>
+                      <div onClick={()=>toggle(task.id)} style={{width:18,height:18,borderRadius:"50%",border:"1.5px solid #378ADD",background:task.done?"#378ADD":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,marginTop:2}}>
+                        {task.done&&<svg width="9" height="9" viewBox="0 0 9 9"><polyline points="1.5,4.5 3.5,7 7.5,1.5" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                       </div>
-                    );
-                  })}
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+                          <span style={{fontSize:14,color:task.done?"var(--color-text-secondary)":"var(--color-text-primary)",textDecoration:task.done?"line-through":"none",wordBreak:"break-word"}}>{task.title}</span>
+                          <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#E6F1FB",color:"#378ADD",border:"0.5px solid #90C7F5",fontWeight:500}}>everyday</span>
+                        </div>
+                        {task.notes&&<div style={{fontSize:12,color:"var(--color-text-secondary)",marginTop:2,wordBreak:"break-word"}}>{task.notes}</div>}
+                      </div>
+                      <div style={{display:"flex",gap:4,flexShrink:0,opacity:0.6}}>
+                        <button onClick={()=>toggle(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"#EAF3DE",border:"0.5px solid #97C459",color:"#3B6D11"}}>✓ Done</button>
+                        <button onClick={()=>startEdit(task)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-secondary)"}}>Edit</button>
+                        <button onClick={()=>remove(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-danger)"}}>✕</button>
+                      </div>
+                    </div>
+                  ))}
                   <div style={{fontSize:11,fontWeight:500,color:"var(--color-text-secondary)",padding:"16px 4px 6px",textTransform:"uppercase",letterSpacing:"0.05em"}}>Due Today</div>
                 </>
               )}
 
               {view==="Completed" ? (
-                currentList.length===0 ? (
-                  <div style={{textAlign:"center",padding:"3rem 1rem",color:"var(--color-text-secondary)",fontSize:14}}>No completed tasks yet.</div>
-                ) : (
-                  (() => {
-                    const groups={};
-                    currentList.forEach(t=>{
-                      const dk=t.completedAt?t.completedAt.slice(0,10):"older";
-                      if(!groups[dk]) groups[dk]=[];
-                      groups[dk].push(t);
-                    });
-                    const yesterdayStr=new Date(Date.now()-86400000).toISOString().slice(0,10);
-                    return Object.entries(groups).sort(([a],[b])=>b.localeCompare(a)).map(([dk,gtasks])=>{
-                      const label=dk===todayStr()?"Today":dk===yesterdayStr?"Yesterday":dk==="older"?"Earlier":new Date(dk+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
-                      return (
-                        <div key={dk}>
-                          <div style={{fontSize:11,fontWeight:500,color:"var(--color-text-secondary)",padding:"10px 4px 6px",textTransform:"uppercase",letterSpacing:"0.05em",display:"flex",alignItems:"center",gap:6}}>
-                            <span>✓ {label}</span>
-                            <span style={{fontSize:10,background:"var(--color-background-tertiary)",color:"var(--color-text-secondary)",padding:"1px 6px",borderRadius:10}}>{gtasks.length}</span>
-                          </div>
-                          {gtasks.map(task=>(
-                            <div key={task.id} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",marginBottom:5,background:"var(--color-background-primary)",borderRadius:"var(--border-radius-md)",border:"0.5px solid var(--color-border-tertiary)",borderLeft:"3px solid #63991a",opacity:0.85}}>
-                              <div style={{width:18,height:18,borderRadius:"50%",border:"1.5px solid #63991a",background:"#63991a",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:2}}>
-                                <svg width="9" height="9" viewBox="0 0 9 9"><polyline points="1.5,4.5 3.5,7 7.5,1.5" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                              </div>
-                              <div style={{flex:1,minWidth:0}}>
-                                <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
-                                  <span style={{fontSize:14,color:"var(--color-text-secondary)",textDecoration:"line-through",wordBreak:"break-word"}}>{task.title}</span>
-                                  {!task.isEveryday&&<Badge p={task.priority}/>}
-                                  {task.isEveryday&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#E6F1FB",color:"#378ADD",border:"0.5px solid #90C7F5",fontWeight:500}}>everyday</span>}
-                                </div>
-                                {task.notes&&<div style={{fontSize:12,color:"var(--color-text-secondary)",marginTop:2,wordBreak:"break-word"}}>{task.notes}</div>}
-                                <div style={{display:"flex",gap:10,marginTop:4,alignItems:"center",flexWrap:"wrap"}}>
-                                  {task.completedAt&&<span style={{fontSize:11,color:"#3B6D11"}}>✓ {new Date(task.completedAt).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",hour12:true})}</span>}
-                                  {task.due&&<span style={{fontSize:11,color:"var(--color-text-secondary)"}}>📅 {fmtDate(task.due)}</span>}
-                                </div>
-                              </div>
-                              <div style={{display:"flex",gap:4,flexShrink:0,opacity:0.5}}>
-                                <button onClick={()=>toggle(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-secondary)"}}>Undo</button>
-                                <button onClick={()=>remove(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-danger)"}}>✕</button>
-                              </div>
+                currentList.length===0
+                  ? <div style={{textAlign:"center",padding:"3rem 1rem",color:"var(--color-text-secondary)",fontSize:14}}>No completed tasks yet.</div>
+                  : (()=>{
+                      const groups={};
+                      currentList.forEach(t=>{ const dk=t.completedAt?t.completedAt.slice(0,10):"older"; if(!groups[dk]) groups[dk]=[]; groups[dk].push(t); });
+                      const yesterdayStr=new Date(Date.now()-86400000).toISOString().slice(0,10);
+                      return Object.entries(groups).sort(([a],[b])=>b.localeCompare(a)).map(([dk,gtasks])=>{
+                        const label=dk===todayStr()?"Today":dk===yesterdayStr?"Yesterday":dk==="older"?"Earlier":new Date(dk+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
+                        return (
+                          <div key={dk}>
+                            <div style={{fontSize:11,fontWeight:500,color:"var(--color-text-secondary)",padding:"10px 4px 6px",textTransform:"uppercase",letterSpacing:"0.05em",display:"flex",alignItems:"center",gap:6}}>
+                              <span>✓ {label}</span>
+                              <span style={{fontSize:10,background:"var(--color-background-tertiary)",color:"var(--color-text-secondary)",padding:"1px 6px",borderRadius:10}}>{gtasks.length}</span>
                             </div>
-                          ))}
-                        </div>
-                      );
-                    });
-                  })()
-                )
+                            {gtasks.map(task=>(
+                              <div key={task.id} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",marginBottom:5,background:"var(--color-background-primary)",borderRadius:"var(--border-radius-md)",border:"0.5px solid var(--color-border-tertiary)",borderLeft:"3px solid #63991a",opacity:0.85}}>
+                                <div style={{width:18,height:18,borderRadius:"50%",border:"1.5px solid #63991a",background:"#63991a",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:2}}>
+                                  <svg width="9" height="9" viewBox="0 0 9 9"><polyline points="1.5,4.5 3.5,7 7.5,1.5" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                </div>
+                                <div style={{flex:1,minWidth:0}}>
+                                  <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+                                    <span style={{fontSize:14,color:"var(--color-text-secondary)",textDecoration:"line-through",wordBreak:"break-word"}}>{task.title}</span>
+                                    {!task.isEveryday&&<Badge p={task.priority}/>}
+                                    {task.isEveryday&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#E6F1FB",color:"#378ADD",border:"0.5px solid #90C7F5",fontWeight:500}}>everyday</span>}
+                                  </div>
+                                  {task.notes&&<div style={{fontSize:12,color:"var(--color-text-secondary)",marginTop:2,wordBreak:"break-word"}}>{task.notes}</div>}
+                                  <div style={{display:"flex",gap:10,marginTop:4,alignItems:"center",flexWrap:"wrap"}}>
+                                    {task.completedAt&&<span style={{fontSize:11,color:"#3B6D11"}}>✓ {new Date(task.completedAt).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",hour12:true})}</span>}
+                                    {task.due&&<span style={{fontSize:11,color:"var(--color-text-secondary)"}}>📅 {fmtDate(task.due)}</span>}
+                                  </div>
+                                </div>
+                                <div style={{display:"flex",gap:4,flexShrink:0,opacity:0.5}}>
+                                  <button onClick={()=>toggle(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-secondary)"}}>Undo</button>
+                                  <button onClick={()=>remove(task.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-danger)"}}>✕</button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      });
+                    })()
               ) : (
                 <>
                   {currentList.length===0&&(
@@ -492,14 +496,12 @@
                     </div>
                   )}
                   {currentList.map((task,i)=>{
-                    const od=isOverdue(task.due)&&!task.done;
-                    const td=isToday(task.due)&&!task.done;
-                    const isOver=overIdx===i;
+                    const od=isOverdue(task.due)&&!task.done, td=isToday(task.due)&&!task.done;
                     return (
                       <div key={task.id} draggable
                         onDragStart={e=>onDS(e,i)} onDragEnter={()=>onDE(i)}
                         onDragOver={e=>e.preventDefault()} onDrop={e=>onDrop(e,i,currentList)} onDragEnd={onDEnd}
-                        style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",marginBottom:5,background:"var(--color-background-primary)",borderRadius:"var(--border-radius-md)",border:isOver?"0.5px solid #378ADD":"0.5px solid var(--color-border-tertiary)",opacity:dragIdx===i?0.35:1,cursor:"grab",transition:"border-color 0.12s",borderLeft:task.isEveryday?`3px solid #378ADD`:`3px solid ${od?"#E24B4A":td?"#EF9F27":P[task.priority].dot}`}}>
+                        style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",marginBottom:5,background:"var(--color-background-primary)",borderRadius:"var(--border-radius-md)",border:overIdx===i?"0.5px solid #378ADD":"0.5px solid var(--color-border-tertiary)",opacity:dragIdx===i?0.35:1,cursor:"grab",transition:"border-color 0.12s",borderLeft:task.isEveryday?"3px solid #378ADD":`3px solid ${od?"#E24B4A":td?"#EF9F27":P[task.priority].dot}`}}>
                         <div onClick={()=>toggle(task.id)} style={{width:18,height:18,borderRadius:"50%",border:`1.5px solid ${P[task.priority]?.dot||"#ccc"}`,background:"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,marginTop:2}}/>
                         <div style={{flex:1,minWidth:0}}>
                           <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
@@ -526,7 +528,7 @@
             </div>
           </div>
 
-          {/* CALENDAR PANEL */}
+          {/* ── CALENDAR PANEL ── */}
           <div style={{width:200,flexShrink:0,borderLeft:"0.5px solid var(--color-border-tertiary)",display:"flex",flexDirection:"column",background:"var(--color-background-secondary)"}}>
             <div style={{padding:"1rem 0.75rem 0.5rem",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
@@ -538,13 +540,9 @@
                 {["S","M","T","W","T","F","S"].map((d,i)=><div key={i} style={{fontSize:9,color:"var(--color-text-secondary)",padding:"2px 0",fontWeight:500}}>{d}</div>)}
                 {Array.from({length:firstDay}).map((_,i)=><div key={"e"+i}/>)}
                 {Array.from({length:dim}).map((_,i)=>{
-                  const day=i+1;
-                  const ds=toDS(calYear,calMonth,day);
-                  const isTd=ds===todayStr();
+                  const day=i+1, ds=toDS(calYear,calMonth,day), isTd=ds===todayStr();
                   const tasks_=byDate[ds]||[];
-                  const hasHigh=tasks_.some(t=>!t.done&&t.priority==="High");
-                  const hasDue=tasks_.some(t=>!t.done);
-                  const isSel=selDay===day;
+                  const hasHigh=tasks_.some(t=>!t.done&&t.priority==="High"), hasDue=tasks_.some(t=>!t.done), isSel=selDay===day;
                   return (
                     <div key={day} onClick={()=>setSelDay(isSel?null:day)} style={{position:"relative",padding:"3px 1px",borderRadius:4,cursor:"pointer",background:isTd?"#378ADD":isSel?"var(--color-background-primary)":"transparent",color:isTd?"#fff":ds<todayStr()?"var(--color-text-secondary)":"var(--color-text-primary)",fontSize:10,textAlign:"center",border:isSel&&!isTd?"0.5px solid #378ADD":"0.5px solid transparent"}}>
                       {day}
@@ -592,7 +590,7 @@
             )}
           </div>
 
-          {/* DAILY BRIEFING MODAL */}
+          {/* ── DAILY BRIEFING MODAL ── */}
           {showBriefing&&(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center"}}>
               <div style={{background:"var(--color-background-primary)",borderRadius:"var(--border-radius-lg)",border:"0.5px solid var(--color-border-tertiary)",padding:"1.5rem",width:"min(360px,90vw)",boxSizing:"border-box"}}>
@@ -640,7 +638,497 @@
       );
     }
 
-    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    /* ═══════════════════════════════════════════════════════════════
+       WORKOUT APP
+    ═══════════════════════════════════════════════════════════════ */
+    function WorkoutApp(){
+      const [wView,setWView]=useState("dashboard");
+      const [workouts,setWorkouts]=useState([]);
+      const [customExercises,setCustomExercises]=useState([]);
+      const [activeWorkout,setActiveWorkout]=useState(null);
+      const [wTimer,setWTimer]=useState(0);
+      const [showExPicker,setShowExPicker]=useState(false);
+      const [exSearch,setExSearch]=useState("");
+      const [exCatFilter,setExCatFilter]=useState("All");
+      const [histDetail,setHistDetail]=useState(null);
+      const [libFilter,setLibFilter]=useState("All");
+      const [showAddExForm,setShowAddExForm]=useState(false);
+      const [newExName,setNewExName]=useState("");
+      const [newExCat,setNewExCat]=useState("Custom");
+      const [wLoaded,setWLoaded]=useState(false);
+      const [workoutName,setWorkoutName]=useState("My Workout");
+      const [showTemplates,setShowTemplates]=useState(false);
+      const timerRef=useRef(null);
+
+      useEffect(()=>{
+        (async()=>{
+          try{ const wr=await window.storage.get("fitness_workouts"); if(wr?.value) setWorkouts(JSON.parse(wr.value)); }catch{}
+          try{ const er=await window.storage.get("fitness_custom_ex"); if(er?.value) setCustomExercises(JSON.parse(er.value)); }catch{}
+          setWLoaded(true);
+        })();
+      },[]);
+
+      const workoutId=activeWorkout?activeWorkout.id:null;
+      useEffect(()=>{
+        if(!workoutId) return;
+        timerRef.current=setInterval(()=>setWTimer(t=>t+1),1000);
+        return()=>clearInterval(timerRef.current);
+      },[workoutId]);
+
+      const persistW=async w=>{ try{ await window.storage.set("fitness_workouts",JSON.stringify(w)); }catch{} };
+      const persistCE=async e=>{ try{ await window.storage.set("fitness_custom_ex",JSON.stringify(e)); }catch{} };
+
+      const allExercises=[...DEFAULT_EXERCISES,...customExercises];
+
+      const getPrevSets=(name,wList)=>{
+        for(const w of wList){ const found=w.exercises?.find(e=>e.name===name); if(found?.sets?.length) return found.sets; }
+        return null;
+      };
+
+      const startWorkout=(name,templateExercises=[])=>{
+        setWTimer(0);
+        const exercises=templateExercises.map(exName=>{
+          const ex=allExercises.find(e=>e.name===exName)||{name:exName,category:"Custom"};
+          const prev=getPrevSets(exName,workouts);
+          return {id:genId(),name:ex.name,category:ex.category,prevSets:prev,sets:prev?prev.map(s=>({weight:s.weight||"",reps:s.reps||"",done:false})):[{weight:"",reps:"",done:false}],notes:""};
+        });
+        setActiveWorkout({id:genId(),name,startedAt:new Date().toISOString(),exercises});
+        setWorkoutName(name);
+        setWView("log");
+        setShowTemplates(false);
+      };
+
+      const addExerciseToWorkout=ex=>{
+        const prev=getPrevSets(ex.name,workouts);
+        setActiveWorkout(w=>({...w,exercises:[...w.exercises,{id:genId(),name:ex.name,category:ex.category,prevSets:prev,sets:prev?prev.map(s=>({weight:s.weight||"",reps:s.reps||"",done:false})):[{weight:"",reps:"",done:false}],notes:""}]}));
+        setShowExPicker(false); setExSearch("");
+      };
+
+      const updateSet=(exId,si,field,val)=>setActiveWorkout(w=>({...w,exercises:w.exercises.map(e=>e.id===exId?{...e,sets:e.sets.map((s,i)=>i===si?{...s,[field]:val}:s)}:e)}));
+      const toggleSet=(exId,si)=>setActiveWorkout(w=>({...w,exercises:w.exercises.map(e=>e.id===exId?{...e,sets:e.sets.map((s,i)=>i===si?{...s,done:!s.done}:s)}:e)}));
+      const addSet=exId=>setActiveWorkout(w=>({...w,exercises:w.exercises.map(e=>{if(e.id!==exId)return e; const last=e.sets[e.sets.length-1]; return{...e,sets:[...e.sets,{weight:last?.weight||"",reps:last?.reps||"",done:false}]};})}));
+      const removeExercise=exId=>setActiveWorkout(w=>({...w,exercises:w.exercises.filter(e=>e.id!==exId)}));
+
+      const finishWorkout=()=>{
+        if(!activeWorkout) return;
+        const doneSets=activeWorkout.exercises.reduce((s,e)=>s+e.sets.filter(s=>s.done).length,0);
+        if(doneSets===0&&!window.confirm("No sets marked complete. Save anyway?")) return;
+        const finished={
+          ...activeWorkout,
+          name:workoutName,
+          finishedAt:new Date().toISOString(),
+          duration:wTimer,
+          exercises:activeWorkout.exercises.map(e=>({...e,sets:e.sets.filter(s=>s.done&&(s.weight||s.reps))})).filter(e=>e.sets.length>0),
+        };
+        const updated=[finished,...workouts];
+        setWorkouts(updated); persistW(updated);
+        clearInterval(timerRef.current);
+        setActiveWorkout(null); setWTimer(0); setWorkoutName("My Workout"); setWView("dashboard");
+      };
+
+      const cancelWorkout=()=>{
+        if(!window.confirm("Discard this workout?")) return;
+        clearInterval(timerRef.current);
+        setActiveWorkout(null); setWTimer(0); setWorkoutName("My Workout"); setWView("dashboard");
+      };
+
+      const addCustomExercise=()=>{
+        if(!newExName.trim()) return;
+        const ex={id:"c"+genId(),name:newExName.trim(),category:newExCat,type:"Custom"};
+        const updated=[...customExercises,ex]; setCustomExercises(updated); persistCE(updated);
+        setNewExName(""); setNewExCat("Custom"); setShowAddExForm(false);
+      };
+
+      const fmtTimer=s=>{ const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60; return h>0?`${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`:`${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`; };
+      const fmtDur=s=>{ if(!s) return "—"; const m=Math.floor(s/60); return m<60?`${m}m`:`${Math.floor(m/60)}h ${m%60}m`; };
+      const totalVol=exList=>{ const v=exList.reduce((sum,e)=>sum+e.sets.reduce((s2,s)=>s2+(parseFloat(s.weight)||0)*(parseFloat(s.reps)||0),0),0); return v>0?`${v.toLocaleString()} lbs`:"Bodyweight"; };
+
+      const fmtWDate=iso=>{ if(!iso) return ""; const d=new Date(iso),td=new Date(),yd=new Date(td); yd.setDate(td.getDate()-1); if(d.toDateString()===td.toDateString()) return "Today"; if(d.toDateString()===yd.toDateString()) return "Yesterday"; return d.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}); };
+
+      const thisWeek=workouts.filter(w=>{ if(!w.finishedAt) return false; const d=new Date(w.finishedAt),now=new Date(),sun=new Date(now); sun.setDate(now.getDate()-now.getDay()); sun.setHours(0,0,0,0); return d>=sun; });
+
+      const calcStreak=()=>{
+        const dates=[...new Set(workouts.map(w=>w.finishedAt?.slice(0,10)).filter(Boolean))].sort().reverse();
+        if(!dates.length) return 0;
+        let streak=0;
+        for(let i=0;i<dates.length;i++){
+          const exp=new Date(); exp.setDate(exp.getDate()-i);
+          if(dates[i]===exp.toISOString().slice(0,10)) streak++;
+          else break;
+        }
+        return streak;
+      };
+
+      const filteredExercises=allExercises.filter(e=>(exCatFilter==="All"||e.category===exCatFilter)&&(!exSearch||e.name.toLowerCase().includes(exSearch.toLowerCase())));
+      const libExercises=allExercises.filter(e=>libFilter==="All"||e.category===libFilter);
+
+      if(!wLoaded) return <div style={{padding:"2rem",color:"var(--color-text-secondary)",fontSize:14}}>Loading fitness data…</div>;
+
+      return (
+        <div style={{display:"flex",flexDirection:"column",minHeight:520,fontFamily:"var(--font-sans)"}}>
+
+          {/* Sub-nav */}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 1rem",borderBottom:"0.5px solid var(--color-border-tertiary)",background:"var(--color-background-secondary)",flexShrink:0}}>
+            <div style={{display:"flex"}}>
+              {(activeWorkout?["log","history","exercises"]:["dashboard","history","exercises"]).map(v=>{
+                const labels={dashboard:"Dashboard",log:"🏋️ Logging",history:"History",exercises:"Exercises"};
+                return (
+                  <button key={v} onClick={()=>setWView(v)}
+                    style={{padding:"10px 14px",fontSize:12,fontWeight:wView===v?600:400,cursor:"pointer",background:"transparent",border:"none",borderBottom:wView===v?"2px solid #378ADD":"2px solid transparent",color:wView===v?"#378ADD":"var(--color-text-secondary)"}}>
+                    {labels[v]}
+                  </button>
+                );
+              })}
+              {activeWorkout&&<button key="dashboard" onClick={()=>{if(window.confirm("Cancel this workout?")) cancelWorkout();}}
+                style={{padding:"10px 14px",fontSize:12,fontWeight:400,cursor:"pointer",background:"transparent",border:"none",borderBottom:"2px solid transparent",color:"var(--color-text-danger)"}}>
+                ✕ Cancel
+              </button>}
+            </div>
+            {activeWorkout&&(
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontSize:15,fontWeight:700,color:"#378ADD",fontVariantNumeric:"tabular-nums",letterSpacing:"0.02em"}}>⏱ {fmtTimer(wTimer)}</span>
+                <button onClick={finishWorkout} style={{fontSize:12,padding:"6px 16px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"#63991a",border:"none",color:"#fff",fontWeight:600}}>Finish Workout</button>
+              </div>
+            )}
+          </div>
+
+          {/* Content */}
+          <div style={{flex:1,overflowY:"auto",padding:"1.25rem"}}>
+
+            {/* ── DASHBOARD ── */}
+            {wView==="dashboard"&&(
+              <div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:20}}>
+                  {[
+                    {label:"Streak",      value:`${calcStreak()} days`,  icon:"🔥",color:"#E65100"},
+                    {label:"This Week",   value:`${thisWeek.length} session${thisWeek.length!==1?"s":""}`, icon:"📊",color:"#378ADD"},
+                    {label:"All Time",    value:`${workouts.length} workouts`,  icon:"💪",color:"#4A148C"},
+                    {label:"Today's Vol", value:(()=>{ const tw=workouts.find(w=>w.finishedAt?.slice(0,10)===todayStr()); return tw?totalVol(tw.exercises):"—"; })(), icon:"⚖️",color:"#1B5E20"},
+                  ].map(s=>(
+                    <div key={s.label} style={{background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-md)",padding:"12px 14px"}}>
+                      <div style={{fontSize:20,marginBottom:4}}>{s.icon}</div>
+                      <div style={{fontSize:16,fontWeight:700,color:s.color,lineHeight:1}}>{s.value}</div>
+                      <div style={{fontSize:11,color:"var(--color-text-secondary)",marginTop:3}}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{display:"flex",gap:10,marginBottom:24,position:"relative"}}>
+                  <button onClick={()=>startWorkout("My Workout")} style={{flex:1,padding:"14px",fontSize:15,fontWeight:600,cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"#378ADD",border:"none",color:"#fff"}}>
+                    🏋️ Start Empty Workout
+                  </button>
+                  <div style={{position:"relative"}}>
+                    <button onClick={()=>setShowTemplates(t=>!t)} style={{padding:"14px 18px",fontSize:14,fontWeight:500,cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-secondary)",color:"var(--color-text-primary)",whiteSpace:"nowrap"}}>
+                      Use Template ▾
+                    </button>
+                    {showTemplates&&(
+                      <div style={{position:"absolute",top:"calc(100% + 4px)",right:0,background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-secondary)",borderRadius:"var(--border-radius-md)",boxShadow:"0 4px 16px rgba(0,0,0,0.1)",zIndex:100,minWidth:220}}>
+                        {WORKOUT_TEMPLATES.map(t=>(
+                          <button key={t.name} onClick={()=>startWorkout(t.name,t.exercises)}
+                            style={{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",fontSize:13,cursor:"pointer",background:"transparent",border:"none",borderBottom:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-primary)"}}>
+                            <div style={{fontWeight:500}}>{t.name}</div>
+                            <div style={{fontSize:11,color:"var(--color-text-secondary)",marginTop:2}}>{t.exercises.slice(0,3).join(", ")}{t.exercises.length>3?"…":""}</div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{fontSize:11,fontWeight:600,color:"var(--color-text-secondary)",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:10}}>Recent Workouts</div>
+                {workouts.length===0
+                  ? <div style={{textAlign:"center",padding:"3rem",color:"var(--color-text-secondary)",fontSize:14,background:"var(--color-background-secondary)",borderRadius:"var(--border-radius-md)",border:"0.5px solid var(--color-border-tertiary)"}}>No workouts yet — start your first one above! 💪</div>
+                  : workouts.slice(0,5).map(w=>(
+                      <div key={w.id} onClick={()=>{ setHistDetail(w.id); setWView("history"); }}
+                        style={{background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-md)",padding:"12px 14px",marginBottom:8,cursor:"pointer"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                          <div>
+                            <div style={{fontSize:14,fontWeight:500,color:"var(--color-text-primary)"}}>{w.name}</div>
+                            <div style={{fontSize:12,color:"var(--color-text-secondary)",marginTop:2}}>{fmtWDate(w.finishedAt)} · {fmtDur(w.duration)}</div>
+                          </div>
+                          <div style={{textAlign:"right"}}>
+                            <div style={{fontSize:12,fontWeight:500,color:"var(--color-text-primary)"}}>{totalVol(w.exercises)}</div>
+                            <div style={{fontSize:11,color:"var(--color-text-secondary)"}}>{w.exercises.length} exercise{w.exercises.length!==1?"s":""}</div>
+                          </div>
+                        </div>
+                        <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+                          {w.exercises.slice(0,4).map(e=>{ const cc=CAT_COLORS[e.category]||CAT_COLORS.Custom; return <span key={e.id||e.name} style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:cc.bg,color:cc.color,border:`0.5px solid ${cc.border}`}}>{e.name}</span>; })}
+                          {w.exercises.length>4&&<span style={{fontSize:10,color:"var(--color-text-secondary)"}}>+{w.exercises.length-4} more</span>}
+                        </div>
+                      </div>
+                    ))
+                }
+              </div>
+            )}
+
+            {/* ── LOG WORKOUT ── */}
+            {wView==="log"&&activeWorkout&&(
+              <div>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+                  <input value={workoutName} onChange={e=>setWorkoutName(e.target.value)}
+                    style={{fontSize:20,fontWeight:700,color:"var(--color-text-primary)",border:"none",borderBottom:"2px solid var(--color-border-secondary)",background:"transparent",outline:"none",flex:1,padding:"2px 0",fontFamily:"var(--font-sans)"}}/>
+                </div>
+
+                {activeWorkout.exercises.length===0&&(
+                  <div style={{textAlign:"center",padding:"2rem",color:"var(--color-text-secondary)",fontSize:14,background:"var(--color-background-secondary)",borderRadius:"var(--border-radius-md)",border:"0.5px dashed var(--color-border-secondary)",marginBottom:16}}>
+                    Add your first exercise below 👇
+                  </div>
+                )}
+
+                {activeWorkout.exercises.map(ex=>{
+                  const cc=CAT_COLORS[ex.category]||CAT_COLORS.Custom;
+                  const doneCount=ex.sets.filter(s=>s.done).length;
+                  return (
+                    <div key={ex.id} style={{marginBottom:14,background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-md)",overflow:"hidden",borderLeft:`3px solid ${cc.dot}`}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",borderBottom:"0.5px solid var(--color-border-tertiary)",background:"var(--color-background-primary)"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <span style={{fontSize:14,fontWeight:600,color:"var(--color-text-primary)"}}>{ex.name}</span>
+                          <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:cc.bg,color:cc.color,border:`0.5px solid ${cc.border}`}}>{ex.category}</span>
+                          {doneCount>0&&<span style={{fontSize:10,color:"#3B6D11",fontWeight:500}}>{doneCount}/{ex.sets.length} done</span>}
+                        </div>
+                        <button onClick={()=>removeExercise(ex.id)} style={{fontSize:11,padding:"2px 8px",cursor:"pointer",borderRadius:"var(--border-radius-sm)",background:"transparent",border:"0.5px solid var(--color-border-tertiary)",color:"var(--color-text-danger)"}}>Remove</button>
+                      </div>
+                      <div style={{padding:"8px 12px"}}>
+                        <div style={{display:"grid",gridTemplateColumns:"36px 1fr 76px 66px 34px",gap:5,marginBottom:4,fontSize:10,fontWeight:600,color:"var(--color-text-secondary)",textTransform:"uppercase",letterSpacing:"0.04em",padding:"0 2px"}}>
+                          <span style={{textAlign:"center"}}>Set</span>
+                          <span>Previous</span>
+                          <span style={{textAlign:"center"}}>Weight</span>
+                          <span style={{textAlign:"center"}}>Reps</span>
+                          <span style={{textAlign:"center"}}>✓</span>
+                        </div>
+                        {ex.sets.map((set,si)=>{
+                          const prev=ex.prevSets?.[si];
+                          return (
+                            <div key={si} style={{display:"grid",gridTemplateColumns:"36px 1fr 76px 66px 34px",gap:5,marginBottom:5,alignItems:"center"}}>
+                              <span style={{fontSize:12,fontWeight:600,color:set.done?"#3B6D11":"var(--color-text-secondary)",textAlign:"center"}}>{si+1}</span>
+                              <span style={{fontSize:11,color:"var(--color-text-tertiary)",paddingLeft:2}}>
+                                {prev?`${prev.weight||"—"} × ${prev.reps||"—"}`:"—"}
+                              </span>
+                              <input type="number" placeholder="lbs" value={set.weight} onChange={e=>updateSet(ex.id,si,"weight",e.target.value)}
+                                style={{fontSize:13,padding:"5px 6px",borderRadius:"var(--border-radius-sm)",border:"0.5px solid var(--color-border-secondary)",background:set.done?"#EAF3DE":"var(--color-background-primary)",color:"var(--color-text-primary)",textAlign:"center",width:"100%",boxSizing:"border-box",outline:"none"}}/>
+                              <input type="number" placeholder="reps" value={set.reps} onChange={e=>updateSet(ex.id,si,"reps",e.target.value)}
+                                style={{fontSize:13,padding:"5px 6px",borderRadius:"var(--border-radius-sm)",border:"0.5px solid var(--color-border-secondary)",background:set.done?"#EAF3DE":"var(--color-background-primary)",color:"var(--color-text-primary)",textAlign:"center",width:"100%",boxSizing:"border-box",outline:"none"}}/>
+                              <button onClick={()=>toggleSet(ex.id,si)}
+                                style={{width:32,height:32,borderRadius:"var(--border-radius-sm)",border:`1.5px solid ${set.done?"#63991a":"var(--color-border-secondary)"}`,background:set.done?"#63991a":"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                                {set.done&&<svg width="13" height="13" viewBox="0 0 13 13"><polyline points="2.5,6.5 5.5,9.5 10.5,3.5" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                              </button>
+                            </div>
+                          );
+                        })}
+                        <button onClick={()=>addSet(ex.id)} style={{fontSize:12,padding:"5px 12px",marginTop:3,cursor:"pointer",borderRadius:"var(--border-radius-sm)",background:"transparent",border:"0.5px dashed var(--color-border-secondary)",color:"var(--color-text-secondary)",width:"100%"}}>
+                          + Add Set
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <button onClick={()=>setShowExPicker(true)} style={{width:"100%",padding:"12px",fontSize:14,fontWeight:500,cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"var(--color-background-secondary)",border:"0.5px dashed #378ADD",color:"#378ADD",marginTop:4}}>
+                  + Add Exercise
+                </button>
+              </div>
+            )}
+
+            {wView==="log"&&!activeWorkout&&(
+              <div style={{textAlign:"center",padding:"3rem",color:"var(--color-text-secondary)"}}>
+                <div style={{fontSize:14,marginBottom:12}}>No active workout.</div>
+                <button onClick={()=>setWView("dashboard")} style={{fontSize:13,padding:"8px 20px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"#378ADD",border:"none",color:"#fff"}}>← Back to Dashboard</button>
+              </div>
+            )}
+
+            {/* ── HISTORY ── */}
+            {wView==="history"&&(
+              <div>
+                <div style={{fontSize:11,fontWeight:600,color:"var(--color-text-secondary)",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:12}}>Workout History · {workouts.length} total</div>
+                {workouts.length===0
+                  ? <div style={{textAlign:"center",padding:"3rem",color:"var(--color-text-secondary)",fontSize:14}}>No workouts logged yet.</div>
+                  : workouts.map(w=>{
+                      const isOpen=histDetail===w.id;
+                      return (
+                        <div key={w.id} style={{marginBottom:8,border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-md)",overflow:"hidden"}}>
+                          <div onClick={()=>setHistDetail(isOpen?null:w.id)}
+                            style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 14px",cursor:"pointer",background:"var(--color-background-secondary)"}}>
+                            <div>
+                              <div style={{fontSize:13,fontWeight:500,color:"var(--color-text-primary)"}}>{w.name}</div>
+                              <div style={{fontSize:11,color:"var(--color-text-secondary)",marginTop:2}}>{fmtWDate(w.finishedAt)} · {fmtDur(w.duration)} · {w.exercises.length} exercise{w.exercises.length!==1?"s":""}</div>
+                            </div>
+                            <div style={{display:"flex",alignItems:"center",gap:8}}>
+                              <span style={{fontSize:12,fontWeight:500,color:"var(--color-text-secondary)"}}>{totalVol(w.exercises)}</span>
+                              <span style={{fontSize:11,color:"var(--color-text-tertiary)"}}>{isOpen?"▲":"▼"}</span>
+                            </div>
+                          </div>
+                          {isOpen&&(
+                            <div style={{padding:"12px 14px",background:"var(--color-background-primary)",borderTop:"0.5px solid var(--color-border-tertiary)"}}>
+                              {w.exercises.map(ex=>{
+                                const cc=CAT_COLORS[ex.category]||CAT_COLORS.Custom;
+                                return (
+                                  <div key={ex.id||ex.name} style={{marginBottom:14}}>
+                                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                                      <span style={{width:8,height:8,borderRadius:"50%",background:cc.dot,display:"inline-block",flexShrink:0}}/>
+                                      <span style={{fontSize:13,fontWeight:600,color:"var(--color-text-primary)"}}>{ex.name}</span>
+                                      <span style={{fontSize:10,padding:"2px 7px",borderRadius:20,background:cc.bg,color:cc.color,border:`0.5px solid ${cc.border}`}}>{ex.category}</span>
+                                    </div>
+                                    <div style={{paddingLeft:16}}>
+                                      {ex.sets.map((s,i)=>(
+                                        <div key={i} style={{fontSize:12,color:"var(--color-text-secondary)",marginBottom:3}}>
+                                          <span style={{fontWeight:500,color:"var(--color-text-primary)"}}>{s.weight||"—"} lbs</span> × <span style={{fontWeight:500,color:"var(--color-text-primary)"}}>{s.reps||"—"} reps</span>
+                                          <span style={{fontSize:10,color:"var(--color-text-tertiary)",marginLeft:6}}>Set {i+1}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              <button onClick={()=>startWorkout(w.name,w.exercises.map(e=>e.name))}
+                                style={{fontSize:12,padding:"7px 16px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"#378ADD",border:"none",color:"#fff",marginTop:4,fontWeight:500}}>
+                                🔄 Repeat This Workout
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                }
+              </div>
+            )}
+
+            {/* ── EXERCISES ── */}
+            {wView==="exercises"&&(
+              <div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                  <div style={{fontSize:11,fontWeight:600,color:"var(--color-text-secondary)",textTransform:"uppercase",letterSpacing:"0.05em"}}>Exercise Library · {allExercises.length}</div>
+                  <button onClick={()=>setShowAddExForm(t=>!t)} style={{fontSize:12,padding:"5px 14px",cursor:"pointer",borderRadius:"var(--border-radius-md)",background:"#378ADD",border:"none",color:"#fff",fontWeight:500}}>+ Custom Exercise</button>
+                </div>
+
+                {showAddExForm&&(
+                  <div style={{marginBottom:14,padding:"12px",background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-secondary)",borderRadius:"var(--border-radius-md)"}}>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                      <input placeholder="Exercise name" value={newExName} onChange={e=>setNewExName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addCustomExercise()} autoFocus
+                        style={{flex:1,minWidth:140,fontSize:13,padding:"7px 10px",borderRadius:"var(--border-radius-sm)",border:"0.5px solid var(--color-border-secondary)",background:"var(--color-background-primary)",color:"var(--color-text-primary)",outline:"none"}}/>
+                      <select value={newExCat} onChange={e=>setNewExCat(e.target.value)}
+                        style={{fontSize:13,padding:"7px 10px",borderRadius:"var(--border-radius-sm)",border:"0.5px solid var(--color-border-secondary)",background:"var(--color-background-primary)",color:"var(--color-text-primary)"}}>
+                        {["Chest","Back","Legs","Shoulders","Arms","Core","Cardio","Custom"].map(c=><option key={c}>{c}</option>)}
+                      </select>
+                      <button onClick={addCustomExercise} style={{fontSize:13,padding:"7px 14px",cursor:"pointer",borderRadius:"var(--border-radius-sm)",background:"#378ADD",border:"none",color:"#fff",fontWeight:500}}>Add</button>
+                      <button onClick={()=>setShowAddExForm(false)} style={{fontSize:13,padding:"7px 10px",cursor:"pointer",borderRadius:"var(--border-radius-sm)",background:"transparent",border:"0.5px solid var(--color-border-secondary)",color:"var(--color-text-secondary)"}}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
+                  {EX_CATS.map(c=>{ const cc=c==="All"?null:CAT_COLORS[c]; return (
+                    <button key={c} onClick={()=>setLibFilter(c)}
+                      style={{fontSize:11,padding:"4px 10px",cursor:"pointer",borderRadius:20,background:libFilter===c?(cc?cc.bg:"#E6F1FB"):"var(--color-background-tertiary)",border:`0.5px solid ${libFilter===c?(cc?cc.border:"#90C7F5"):"var(--color-border-tertiary)"}`,color:libFilter===c?(cc?cc.color:"#378ADD"):"var(--color-text-secondary)",fontWeight:libFilter===c?500:400}}>
+                      {c}
+                    </button>
+                  ); })}
+                </div>
+
+                {libExercises.map(ex=>{ const cc=CAT_COLORS[ex.category]||CAT_COLORS.Custom; return (
+                  <div key={ex.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",marginBottom:3,background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-sm)"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <span style={{width:8,height:8,borderRadius:"50%",background:cc.dot,display:"inline-block",flexShrink:0}}/>
+                      <span style={{fontSize:13,color:"var(--color-text-primary)"}}>{ex.name}</span>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{fontSize:10,padding:"2px 7px",borderRadius:20,background:cc.bg,color:cc.color,border:`0.5px solid ${cc.border}`}}>{ex.category}</span>
+                      <span style={{fontSize:10,color:"var(--color-text-tertiary)"}}>{ex.type}</span>
+                    </div>
+                  </div>
+                ); })}
+              </div>
+            )}
+
+          </div>{/* /content */}
+
+          {/* ── EXERCISE PICKER MODAL ── */}
+          {showExPicker&&(
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <div style={{background:"var(--color-background-primary)",borderRadius:"var(--border-radius-lg)",border:"0.5px solid var(--color-border-tertiary)",width:"min(500px,92vw)",maxHeight:"72vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 32px rgba(0,0,0,0.18)"}}>
+                <div style={{padding:"1rem 1rem 0.5rem",borderBottom:"0.5px solid var(--color-border-tertiary)",flexShrink:0}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                    <span style={{fontSize:15,fontWeight:600,color:"var(--color-text-primary)"}}>Add Exercise</span>
+                    <button onClick={()=>{setShowExPicker(false);setExSearch("");}} style={{fontSize:20,cursor:"pointer",background:"transparent",border:"none",color:"var(--color-text-secondary)",lineHeight:1}}>✕</button>
+                  </div>
+                  <input placeholder="Search exercises…" value={exSearch} onChange={e=>setExSearch(e.target.value)} autoFocus
+                    style={{width:"100%",boxSizing:"border-box",fontSize:13,padding:"8px 10px",borderRadius:"var(--border-radius-md)",border:"0.5px solid var(--color-border-secondary)",background:"var(--color-background-secondary)",color:"var(--color-text-primary)",outline:"none",marginBottom:8}}/>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    {EX_CATS.map(c=>{ const cc=c==="All"?null:CAT_COLORS[c]; return (
+                      <button key={c} onClick={()=>setExCatFilter(c)}
+                        style={{fontSize:10,padding:"3px 9px",cursor:"pointer",borderRadius:20,background:exCatFilter===c?(cc?cc.bg:"#E6F1FB"):"var(--color-background-tertiary)",border:`0.5px solid ${exCatFilter===c?(cc?cc.border:"#90C7F5"):"var(--color-border-tertiary)"}`,color:exCatFilter===c?(cc?cc.color:"#378ADD"):"var(--color-text-secondary)",fontWeight:exCatFilter===c?500:400}}>
+                        {c}
+                      </button>
+                    ); })}
+                  </div>
+                </div>
+                <div style={{overflowY:"auto",flex:1,padding:"0.5rem"}}>
+                  {filteredExercises.length===0
+                    ? <div style={{textAlign:"center",padding:"2rem",color:"var(--color-text-secondary)",fontSize:13}}>No exercises found.</div>
+                    : filteredExercises.map(ex=>{ const cc=CAT_COLORS[ex.category]||CAT_COLORS.Custom; return (
+                        <button key={ex.id} onClick={()=>addExerciseToWorkout(ex)}
+                          style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",textAlign:"left",padding:"10px 12px",marginBottom:3,borderRadius:"var(--border-radius-sm)",background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-tertiary)",cursor:"pointer"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <span style={{width:8,height:8,borderRadius:"50%",background:cc.dot,display:"inline-block",flexShrink:0}}/>
+                            <span style={{fontSize:13,color:"var(--color-text-primary)"}}>{ex.name}</span>
+                          </div>
+                          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                            <span style={{fontSize:10,padding:"2px 7px",borderRadius:20,background:cc.bg,color:cc.color,border:`0.5px solid ${cc.border}`}}>{ex.category}</span>
+                            <span style={{fontSize:10,color:"var(--color-text-tertiary)"}}>{ex.type}</span>
+                          </div>
+                        </button>
+                      ); })
+                  }
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+       ROOT APP  (tabs + note state)
+    ═══════════════════════════════════════════════════════════════ */
+    function App(){
+      const [activeTab,setActiveTab]=useState("tasks");
+      const [note,setNote]=useState("");
+      const saveNoteRef=useRef(null);
+
+      useEffect(()=>{
+        (async()=>{ try{ const r=await window.storage.get("app_note"); if(r?.value) setNote(r.value); }catch{} })();
+      },[]);
+
+      const handleNoteChange=val=>{
+        setNote(val);
+        clearTimeout(saveNoteRef.current);
+        saveNoteRef.current=setTimeout(async()=>{ try{ await window.storage.set("app_note",val); }catch{} },350);
+      };
+
+      const TABS=[
+        {id:"tasks",   icon:"📋", label:"Tasks"},
+        {id:"fitness", icon:"💪", label:"Fitness"},
+      ];
+
+      return (
+        <div style={{display:"flex",flexDirection:"column",fontFamily:"var(--font-sans)",background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-lg)",overflow:"hidden",minHeight:600}}>
+          {/* Tab bar */}
+          <div style={{display:"flex",alignItems:"center",borderBottom:"0.5px solid var(--color-border-tertiary)",background:"var(--color-background-secondary)",flexShrink:0,paddingLeft:4}}>
+            {TABS.map(tab=>(
+              <button key={tab.id} onClick={()=>setActiveTab(tab.id)}
+                style={{padding:"11px 20px",fontSize:13,fontWeight:activeTab===tab.id?600:400,cursor:"pointer",background:"transparent",border:"none",borderBottom:activeTab===tab.id?"2.5px solid #378ADD":"2.5px solid transparent",color:activeTab===tab.id?"#378ADD":"var(--color-text-secondary)",display:"flex",alignItems:"center",gap:7,transition:"all 0.12s",letterSpacing:"0.01em"}}>
+                <span style={{fontSize:15}}>{tab.icon}</span>
+                <span>{tab.label}</span>
+              </button>
+            ))}
+          </div>
+
+          {activeTab==="tasks"   && <TasksApp note={note} onNoteChange={handleNoteChange}/>}
+          {activeTab==="fitness" && <WorkoutApp/>}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
   </script>
 </body>
 </html>
